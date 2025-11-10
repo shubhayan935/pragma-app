@@ -54,7 +54,351 @@ interface WorkflowStep {
   };
 }
 
+type NodeStatus = "pending" | "running" | "done" | "needs_input" | "error" | "propagating";
+
+interface EnhancedNodeData extends Record<string, unknown> {
+  label: string;
+  icon?: React.ComponentType<{ size?: number; className?: string }>;
+  status?: NodeStatus;
+  metrics?: { label: string; value: string }[];
+  confidence?: number; // 0-100
+  progress?: number; // 0-100
+}
+
+interface StatusStyle {
+  bg: string;
+  border: string;
+  opacity: string;
+  text?: string;
+  pulse?: boolean;
+}
+
+type StatusStyles = Record<NodeStatus, StatusStyle>;
+
 const reactFlowOptions = { hideAttribution: true };
+
+// Custom Node Components
+function ActionNode({ data }: { data: EnhancedNodeData }) {
+  const Icon = data.icon || Database;
+  const status: NodeStatus = data.status || "pending";
+  const confidence = data.confidence || 0;
+  const progress = data.progress || 0;
+
+  const statusStyles: StatusStyles = {
+    pending: {
+      bg: "rgba(31, 41, 55, 0.35)",
+      border: "rgba(107, 114, 128, 0.3)",
+      opacity: "opacity-85",
+      text: "text-gray-400",
+    },
+    running: {
+      bg: "#161616",
+      border: "#F97316",
+      opacity: "opacity-100",
+      text: "text-[var(--text-primary)]",
+      pulse: true,
+    },
+    done: {
+      bg: "#1F2937",
+      border: "#10B981",
+      opacity: "opacity-100",
+      text: "text-[var(--text-primary)]",
+    },
+    needs_input: {
+      bg: "#1F2937",
+      border: "#F59E0B",
+      opacity: "opacity-100",
+      text: "text-[var(--text-primary)]",
+    },
+    error: {
+      bg: "#1F2937",
+      border: "#DC2626",
+      opacity: "opacity-100",
+      text: "text-[var(--text-primary)]",
+    },
+    propagating: {
+      bg: "rgba(31, 41, 55, 0.5)",
+      border: "rgba(249, 115, 22, 0.4)",
+      opacity: "opacity-90",
+      text: "text-[var(--text-secondary)]",
+    },
+  };
+
+  const style = statusStyles[status];
+
+  return (
+    <div
+      className={`relative ${style.opacity} transition-all duration-300`}
+      style={{ width: "180px" }}
+    >
+      {/* Pulse ring for running state */}
+      {style.pulse && (
+        <div
+          className="absolute inset-0 rounded-[14px] animate-pulse"
+          style={{
+            border: "2px solid rgba(249, 115, 22, 0.3)",
+            animation: "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+          }}
+        />
+      )}
+
+      {/* Main node container */}
+      <div
+        className="rounded-[14px] overflow-hidden"
+        style={{
+          background: style.bg,
+          border: `1.5px solid ${style.border}`,
+        }}
+      >
+        {/* Top row: icon + title */}
+        <div className="px-3 py-2.5 flex items-center gap-2">
+          {/* Confidence ring */}
+          <div className="relative">
+            <div
+              className="w-6 h-6 rounded-full flex items-center justify-center"
+              style={{
+                background: "rgba(249, 115, 22, 0.1)",
+                border: `2px solid transparent`,
+                borderTopColor: confidence > 0 ? "#F97316" : "transparent",
+                borderRightColor: confidence > 25 ? "#F97316" : "transparent",
+                borderBottomColor: confidence > 50 ? "#F97316" : "transparent",
+                borderLeftColor: confidence > 75 ? "#F97316" : "transparent",
+              }}
+            >
+              <Icon size={12} className={style.text} />
+            </div>
+          </div>
+          <span className={`text-[13px] font-semibold ${style.text} flex-1 truncate`}>
+            {data.label}
+          </span>
+        </div>
+
+        {/* Mid row: metrics */}
+        {data.metrics && data.metrics.length > 0 && (
+          <div className="px-3 pb-2 flex items-center gap-2 flex-wrap">
+            {data.metrics.map((metric, idx) => (
+              <div
+                key={idx}
+                className="text-[11px] px-2 py-0.5 rounded"
+                style={{
+                  background: "rgba(249, 115, 22, 0.15)",
+                  color: "#F97316",
+                }}
+              >
+                {metric.label}: {metric.value}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Bottom bar: status + progress */}
+        <div
+          className="px-3 py-1.5 flex items-center justify-between text-[11px]"
+          style={{ background: "rgba(0, 0, 0, 0.2)" }}
+        >
+          <span className="text-gray-400 capitalize">{status.replace("_", " ")}</span>
+          {status === "running" && progress > 0 && (
+            <span className="text-[var(--accent-primary)] font-mono">{progress}%</span>
+          )}
+          {status === "done" && <CheckCircle2 size={12} className="text-green-500" />}
+        </div>
+
+        {/* Progress bar for running state */}
+        {status === "running" && progress > 0 && (
+          <div className="h-0.5 w-full" style={{ background: "rgba(0, 0, 0, 0.3)" }}>
+            <div
+              className="h-full transition-all duration-500"
+              style={{
+                width: `${progress}%`,
+                background: "var(--accent-primary)",
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Port dots */}
+      <div
+        className="absolute w-1.5 h-1.5 rounded-full -left-1 top-1/2 -translate-y-1/2 transition-all hover:w-2 hover:h-2"
+        style={{ background: "#6B7280" }}
+      />
+      <div
+        className="absolute w-1.5 h-1.5 rounded-full -right-1 top-1/2 -translate-y-1/2 transition-all hover:w-2 hover:h-2"
+        style={{ background: "#6B7280" }}
+      />
+    </div>
+  );
+}
+
+function DataSourceNode({ data }: { data: EnhancedNodeData }) {
+  const Icon = data.icon || Database;
+  const status: NodeStatus = data.status || "pending";
+
+  const statusStyles: StatusStyles = {
+    pending: { bg: "rgba(31, 41, 55, 0.35)", border: "rgba(107, 114, 128, 0.3)", opacity: "opacity-85" },
+    running: { bg: "#161616", border: "#F97316", opacity: "opacity-100", pulse: true },
+    done: { bg: "#1F2937", border: "#10B981", opacity: "opacity-100" },
+    needs_input: { bg: "#1F2937", border: "#F59E0B", opacity: "opacity-100" },
+    error: { bg: "#1F2937", border: "#DC2626", opacity: "opacity-100" },
+    propagating: { bg: "rgba(31, 41, 55, 0.5)", border: "rgba(249, 115, 22, 0.4)", opacity: "opacity-90" },
+  };
+
+  const style = statusStyles[status];
+
+  return (
+    <div className={`relative ${style.opacity}`} style={{ width: "160px" }}>
+      {/* Pill shape with left inlet notch */}
+      <div
+        className="rounded-full overflow-hidden relative"
+        style={{
+          background: style.bg,
+          border: `1.5px solid ${style.border}`,
+          paddingLeft: "12px",
+        }}
+      >
+        {/* Left notch */}
+        <div
+          className="absolute left-0 top-1/2 -translate-y-1/2 w-2 h-3"
+          style={{
+            background: style.bg,
+            borderLeft: `1.5px solid ${style.border}`,
+            borderTop: `1.5px solid ${style.border}`,
+            borderBottom: `1.5px solid ${style.border}`,
+            borderTopLeftRadius: "4px",
+            borderBottomLeftRadius: "4px",
+            marginLeft: "-1px",
+          }}
+        />
+
+        <div className="px-3 py-2 flex items-center gap-2">
+          <Icon size={14} className="text-[var(--text-primary)]" />
+          <span className="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+            {data.label}
+          </span>
+        </div>
+      </div>
+
+      {/* Port dot */}
+      <div
+        className="absolute w-1.5 h-1.5 rounded-full -right-1 top-1/2 -translate-y-1/2 transition-all hover:w-2 hover:h-2"
+        style={{ background: "#6B7280" }}
+      />
+    </div>
+  );
+}
+
+function DecisionNode({ data }: { data: EnhancedNodeData }) {
+  const Icon = data.icon || Search;
+  const status: NodeStatus = data.status || "pending";
+
+  const statusStyles: StatusStyles = {
+    pending: { bg: "rgba(31, 41, 55, 0.35)", border: "rgba(107, 114, 128, 0.3)", opacity: "opacity-85" },
+    running: { bg: "#161616", border: "#F97316", opacity: "opacity-100" },
+    done: { bg: "#1F2937", border: "#10B981", opacity: "opacity-100" },
+    needs_input: { bg: "#1F2937", border: "#F59E0B", opacity: "opacity-100" },
+    error: { bg: "#1F2937", border: "#DC2626", opacity: "opacity-100" },
+    propagating: { bg: "rgba(31, 41, 55, 0.5)", border: "rgba(249, 115, 22, 0.4)", opacity: "opacity-90" },
+  };
+
+  const style = statusStyles[status];
+
+  return (
+    <div className={`relative ${style.opacity}`} style={{ width: "140px" }}>
+      {/* Hexagon/chevron shape */}
+      <div
+        className="relative"
+        style={{
+          clipPath: "polygon(10% 0%, 90% 0%, 100% 50%, 90% 100%, 10% 100%, 0% 50%)",
+          background: style.bg,
+          border: `1.5px solid ${style.border}`,
+        }}
+      >
+        <div className="px-4 py-3 flex flex-col items-center justify-center gap-1 text-center">
+          <Icon size={14} className="text-[var(--text-primary)]" />
+          <span className="text-[11px] font-semibold text-[var(--text-primary)]">
+            {data.label}
+          </span>
+        </div>
+      </div>
+
+      {/* Port dots */}
+      <div
+        className="absolute w-1.5 h-1.5 rounded-full -left-1 top-1/2 -translate-y-1/2"
+        style={{ background: "#6B7280" }}
+      />
+      <div
+        className="absolute w-1.5 h-1.5 rounded-full -right-1 top-1/2 -translate-y-1/2"
+        style={{ background: "#6B7280" }}
+      />
+    </div>
+  );
+}
+
+function OutputNode({ data }: { data: EnhancedNodeData }) {
+  const Icon = data.icon || CheckCircle2;
+  const status: NodeStatus = data.status || "pending";
+
+  const statusStyles: StatusStyles = {
+    pending: { bg: "rgba(31, 41, 55, 0.35)", border: "rgba(107, 114, 128, 0.3)", opacity: "opacity-85" },
+    running: { bg: "#161616", border: "#F97316", opacity: "opacity-100" },
+    done: { bg: "#1F2937", border: "#10B981", opacity: "opacity-100" },
+    needs_input: { bg: "#1F2937", border: "#F59E0B", opacity: "opacity-100" },
+    error: { bg: "#1F2937", border: "#DC2626", opacity: "opacity-100" },
+    propagating: { bg: "rgba(31, 41, 55, 0.5)", border: "rgba(249, 115, 22, 0.4)", opacity: "opacity-90" },
+  };
+
+  const style = statusStyles[status];
+
+  return (
+    <div className={`relative ${style.opacity}`} style={{ width: "150px" }}>
+      {/* Tabbed rect with right tab */}
+      <div className="relative">
+        <div
+          className="rounded-lg overflow-hidden"
+          style={{
+            background: style.bg,
+            border: `1.5px solid ${style.border}`,
+          }}
+        >
+          <div className="px-3 py-2.5 flex items-center gap-2">
+            <Icon size={14} className="text-[var(--text-primary)]" />
+            <span className="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+              {data.label}
+            </span>
+          </div>
+        </div>
+
+        {/* Right tab */}
+        <div
+          className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-5"
+          style={{
+            background: style.bg,
+            borderRight: `1.5px solid ${style.border}`,
+            borderTop: `1.5px solid ${style.border}`,
+            borderBottom: `1.5px solid ${style.border}`,
+            borderTopRightRadius: "4px",
+            borderBottomRightRadius: "4px",
+            marginRight: "-1px",
+          }}
+        />
+      </div>
+
+      {/* Port dot */}
+      <div
+        className="absolute w-1.5 h-1.5 rounded-full -left-1 top-1/2 -translate-y-1/2 transition-all hover:w-2 hover:h-2"
+        style={{ background: "#6B7280" }}
+      />
+    </div>
+  );
+}
+
+// Register custom node types
+const nodeTypes = {
+  action: ActionNode,
+  dataSource: DataSourceNode,
+  decision: DecisionNode,
+  output: OutputNode,
+};
 
 // Thinking messages that appear as chat - pairs of thinking + result
 const thinkingMessages: ChatMessage[] = [
@@ -222,35 +566,87 @@ const workflowSteps: WorkflowStep[] = [
   },
 ];
 
-// Nodes will all appear at once after thinking is complete
-const createNode = (id: string, label: string, x: number, y: number, visible: boolean): Node => ({
+// Enhanced node creation
+const createEnhancedNode = (
+  id: string,
+  type: "action" | "dataSource" | "decision" | "output",
+  data: EnhancedNodeData,
+  x: number,
+  y: number
+): Node<EnhancedNodeData> => ({
   id,
-  type: "default",
+  type,
   position: { x, y },
-  data: { label },
+  data,
   style: {
-    background: visible ? "var(--bg-elevated)" : "transparent",
-    border: visible ? "2px solid var(--border-hover)" : "2px solid transparent",
-    color: "var(--text-primary)",
-    borderRadius: "8px",
-    padding: "12px 20px",
-    fontSize: "14px",
-    fontWeight: "600",
-    opacity: visible ? 1 : 0,
-    transition: "opacity 0.8s ease-in-out, border 0.3s ease-in-out",
+    opacity: 0,
+    transition: "opacity 0.8s ease-in-out",
   },
 });
 
-const initialNodes: Node[] = [
-  createNode("1", "Load Data", 250, 50, false),
-  createNode("2", "Cluster Merchants", 250, 140, false),
-  createNode("3", "Unify Names", 250, 230, false),
-  createNode("4", "Extract SKUs", 250, 320, false),
-  createNode("5a", "Catalog", 100, 420, false),
-  createNode("5b", "API", 250, 420, false),
-  createNode("5c", "Web Search", 370, 420, false),
-  createNode("6", "Merge Data", 250, 510, false),
-  createNode("7", "Write Back", 250, 600, false),
+const initialNodes: Node<EnhancedNodeData>[] = [
+  createEnhancedNode("1", "dataSource", {
+    label: "Load Data",
+    icon: Database,
+    status: "pending",
+    metrics: [{ label: "Rows", value: "2.5k" }],
+  }, 250, 50),
+
+  createEnhancedNode("2", "action", {
+    label: "Cluster Merchants",
+    icon: Search,
+    status: "pending",
+    metrics: [{ label: "Match", value: "85%" }],
+    confidence: 85,
+  }, 250, 150),
+
+  createEnhancedNode("3", "action", {
+    label: "Unify Names",
+    icon: FileText,
+    status: "pending",
+    metrics: [{ label: "Confidence", value: "95%" }],
+    confidence: 95,
+  }, 250, 260),
+
+  createEnhancedNode("4", "action", {
+    label: "Extract SKUs",
+    icon: Layers,
+    status: "pending",
+    metrics: [{ label: "SKUs", value: "1.8k" }],
+    confidence: 90,
+  }, 250, 370),
+
+  createEnhancedNode("5a", "dataSource", {
+    label: "Catalog",
+    icon: Database,
+    status: "pending",
+  }, 80, 480),
+
+  createEnhancedNode("5b", "dataSource", {
+    label: "API",
+    icon: Sparkles,
+    status: "pending",
+  }, 250, 480),
+
+  createEnhancedNode("5c", "dataSource", {
+    label: "Web Search",
+    icon: Search,
+    status: "pending",
+  }, 420, 480),
+
+  createEnhancedNode("6", "action", {
+    label: "Merge Data",
+    icon: Layers,
+    status: "pending",
+    metrics: [{ label: "Coverage", value: "92%" }],
+    confidence: 92,
+  }, 250, 590),
+
+  createEnhancedNode("7", "output", {
+    label: "Write Back",
+    icon: CheckCircle2,
+    status: "pending",
+  }, 250, 690),
 ];
 
 const initialEdges: Edge[] = [
@@ -361,7 +757,6 @@ export default function PlanPage() {
         style: {
           ...node.style,
           opacity: 1,
-          border: "2px solid var(--border-hover)",
         },
       }))
     );
@@ -399,25 +794,24 @@ export default function PlanPage() {
       setNodes((nds) =>
         nds.map((node) => {
           if (node.id === nodeId || node.id.startsWith(nodeId)) {
+            // Current executing node - set to running status
             return {
               ...node,
-              style: {
-                ...node.style,
-                opacity: 1,
-                border: `2px solid var(--accent-primary)`,
-                boxShadow: "0 0 12px rgba(249, 115, 22, 0.6)",
+              data: {
+                ...node.data,
+                status: "running" as NodeStatus,
+                progress: 50,
               },
             };
           }
           const prevNodeNum = parseInt(node.id.replace(/[a-z]/g, ""));
           if (prevNodeNum <= executionStep) {
+            // Previously executed nodes - set to done status
             return {
               ...node,
-              style: {
-                ...node.style,
-                opacity: 1,
-                border: `2px solid var(--border-hover)`,
-                boxShadow: "none",
+              data: {
+                ...node.data,
+                status: "done" as NodeStatus,
               },
             };
           }
@@ -470,7 +864,7 @@ export default function PlanPage() {
                   {elapsedTime.toFixed(1)}s
                 </span>
               ) : (
-                `7 STEPS • ~${totalTime} SEC ESTIMATED`
+                `7 STEPS • ~${totalTime} MINS ESTIMATED`
               )}
             </p>
           </div>
@@ -498,6 +892,7 @@ export default function PlanPage() {
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
+            nodeTypes={nodeTypes}
             fitView
             style={{
               background: "var(--bg-primary)",
@@ -630,7 +1025,7 @@ export default function PlanPage() {
                           <button
                             key={step.id}
                             onClick={() => setSelectedStep(step.id)}
-                            className={`w-full text-left p-4 rounded-lg border transition-all hover:border-[var(--border-hover)] ${
+                            className={`w-full text-left p-4 rounded-lg border transition-all hover:border-[var(--border-hover)] cursor-pointer ${
                               index <= executionStep && isExecuting
                                 ? "border-[var(--accent-primary)] bg-[var(--bg-elevated)]"
                                 : "border-[var(--border-default)] bg-[var(--bg-tertiary)]"

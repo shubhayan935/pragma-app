@@ -73,7 +73,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[var(--bg-primary)]">
       {/* Header */}
-      <div className="border-b border-[var(--border-default)]">
+      <div className="">
         <div className="px-6 py-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -85,10 +85,9 @@ export default function Dashboard() {
               </Button>
             </div>
             <div className="flex items-center gap-3">
-              <Button variant="outline">Connect</Button>
               <Button asChild>
                 <Link href="/workflow/new">
-                  <Plus size={18} className="mr-2" />
+                  <Plus className="size-4" />
                   Start Workflow
                 </Link>
               </Button>
@@ -113,7 +112,7 @@ export default function Dashboard() {
         </div>
 
         {/* Filter Bar */}
-        <div className="px-6 py-3 border-t border-[var(--border-default)] flex items-center justify-between">
+        <div className="px-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" className="h-8 w-8">
               <Filter size={18} />
@@ -130,7 +129,7 @@ export default function Dashboard() {
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto m-5 border border-[var(--border-default)] rounded-md">
         <Table>
           <TableHeader>
             <TableRow style={{ background: "#F97316CC" }}>
@@ -185,16 +184,16 @@ export default function Dashboard() {
       </div>
 
       {/* Pagination */}
-      <div className="px-6 py-4 border-t border-[var(--border-default)] flex items-center justify-between">
+      <div className="px-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Select defaultValue="100">
+          <Select defaultValue="10">
             <SelectTrigger className="w-20">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="100">100</SelectItem>
-              <SelectItem value="50">50</SelectItem>
+              <SelectItem value="10">10</SelectItem>
               <SelectItem value="25">25</SelectItem>
+              <SelectItem value="50">50</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -210,7 +209,7 @@ export default function Dashboard() {
               <ChevronLeft size={18} />
             </Button>
             <span className="text-sm font-mono text-[var(--text-secondary)]">
-              1–100 of {totalWorkflows.toLocaleString()}
+              1–10 of {totalWorkflows.toLocaleString()}
             </span>
             <Button variant="ghost" size="icon" className="h-8 w-8">
               <ChevronRight size={18} />
