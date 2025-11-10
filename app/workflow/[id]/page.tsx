@@ -437,7 +437,7 @@ export default function WorkflowDetailPage() {
             </Button>
             <Button>
               <Play size={16} className="mr-2" />
-              Run Again
+              Duplicate Workflow
             </Button>
           </div>
         </div>
@@ -466,13 +466,12 @@ export default function WorkflowDetailPage() {
                 background: "var(--bg-primary)",
               }}
             />
-            <Controls />
           </ReactFlow>
         </div>
 
         {/* Right Panel - Execution Stats */}
         {showStats && (
-          <div className="w-[400px] border-l border-[var(--border-default)] bg-[var(--bg-secondary)] overflow-y-auto">
+          <div className="w-[600px] border-l border-[var(--border-default)] bg-[var(--bg-secondary)] overflow-y-auto">
             <div className="p-6 space-y-6">
               {/* Execution Summary */}
               <div>
@@ -564,15 +563,6 @@ export default function WorkflowDetailPage() {
             </div>
           </div>
         )}
-
-        {/* Toggle Stats Button */}
-        <button
-          onClick={() => setShowStats(!showStats)}
-          className="absolute top-4 right-4 p-2 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-default)] hover:bg-[var(--bg-elevated)] transition-colors z-10"
-          style={{ right: showStats ? "416px" : "16px", transition: "right 300ms" }}
-        >
-          {showStats ? "→" : "←"}
-        </button>
       </div>
     </div>
   );
