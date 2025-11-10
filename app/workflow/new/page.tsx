@@ -13,8 +13,8 @@ export default function NewWorkflow() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (intent.trim()) {
-      // Navigate to thinking/planning page
-      router.push(`/workflow/new/thinking?intent=${encodeURIComponent(intent)}`);
+      // Navigate directly to planning page
+      router.push(`/workflow/new/plan?intent=${encodeURIComponent(intent)}`);
     }
   };
 

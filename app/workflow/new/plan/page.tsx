@@ -19,6 +19,8 @@ import {
   Play,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
+  ChevronUp,
   Send,
   Clock,
   Database,
@@ -33,12 +35,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
-}
-
-interface ThinkingStep {
-  title: string;
-  content: string;
-  duration: number;
+  isThinking?: boolean;
+  isCollapsible?: boolean;
 }
 
 interface WorkflowStep {
@@ -58,39 +56,37 @@ interface WorkflowStep {
 
 const reactFlowOptions = { hideAttribution: true };
 
-const thinkingSteps: ThinkingStep[] = [
+// Thinking messages that appear as chat - pairs of thinking + result
+const thinkingMessages: ChatMessage[] = [
   {
-    title: "Analyzing Schema",
-    content: `I've inspected your transactions table schema. Key columns identified: merchant_name (VARCHAR, high variance), sku_code (VARCHAR), product_name (VARCHAR, 40% null). I'll need to:
-
-1. Run entity resolution on merchant_name to detect variants
-2. Use sku_code as lookup key for product enrichment
-3. Fill product_name, category, price from external sources`,
-    duration: 3000,
+    role: "assistant",
+    content: "Analyzing your data schema...",
+    isThinking: true,
+    isCollapsible: true,
   },
   {
-    title: "Selecting Enrichment Strategy",
-    content: `For merchant_name, I'll use fuzzy matching (Levenshtein distance < 0.85) combined with business name standardization rules. For sku_code, I'll prioritize:
-1. Internal product catalog (if available)
-2. Amazon Product API
-3. Web search fallback for remaining SKUs
-
-Estimated coverage: 95% for merchants, 88% for products`,
-    duration: 4000,
+    role: "assistant",
+    content: "I've inspected your transactions table. Found key columns: merchant_name (VARCHAR, high variance), sku_code (VARCHAR), product_name (VARCHAR, 40% null).\n\nI'll need to:\n1. Run entity resolution on merchant_name to detect variants\n2. Use sku_code as lookup key for product enrichment\n3. Fill product_name, category, price from external sources",
   },
   {
-    title: "Planning Workflow",
-    content: `Building execution graph with 7 nodes:
-→ Load & inspect data
-→ Cluster merchant variants
-→ Unify to canonical names
-→ Extract SKU lookup keys
-→ Fetch product metadata (parallel)
-→ Merge enriched data
-→ Write back results
-
-Ready for your review.`,
-    duration: 4000,
+    role: "assistant",
+    content: "Exploring enrichment strategies...",
+    isThinking: true,
+    isCollapsible: true,
+  },
+  {
+    role: "assistant",
+    content: "For merchant_name, I'll use fuzzy matching (Levenshtein distance < 0.85) combined with business name standardization rules.\n\nFor sku_code, I'll prioritize:\n1. Internal product catalog (if available)\n2. Amazon Product API\n3. Web search fallback for remaining SKUs\n\nEstimated coverage: 95% for merchants, 88% for products",
+  },
+  {
+    role: "assistant",
+    content: "Building execution plan...",
+    isThinking: true,
+    isCollapsible: true,
+  },
+  {
+    role: "assistant",
+    content: "I've designed a 7-step workflow:\n→ Load & inspect data\n→ Cluster merchant variants\n→ Unify to canonical names\n→ Extract SKU lookup keys\n→ Fetch product metadata (parallel)\n→ Merge enriched data\n→ Write back results\n\nReady for your review!",
   },
 ];
 
@@ -226,7 +222,7 @@ const workflowSteps: WorkflowStep[] = [
   },
 ];
 
-// Nodes will be revealed progressively during thinking phase
+// Nodes will all appear at once after thinking is complete
 const createNode = (id: string, label: string, x: number, y: number, visible: boolean): Node => ({
   id,
   type: "default",
@@ -241,7 +237,7 @@ const createNode = (id: string, label: string, x: number, y: number, visible: bo
     fontSize: "14px",
     fontWeight: "600",
     opacity: visible ? 1 : 0,
-    transition: "opacity 0.5s ease-in-out, border 0.3s ease-in-out",
+    transition: "opacity 0.8s ease-in-out, border 0.3s ease-in-out",
   },
 });
 
@@ -258,16 +254,16 @@ const initialNodes: Node[] = [
 ];
 
 const initialEdges: Edge[] = [
-  { id: "e1-2", source: "1", target: "2", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
-  { id: "e2-3", source: "2", target: "3", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
-  { id: "e3-4", source: "3", target: "4", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
-  { id: "e4-5a", source: "4", target: "5a", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
-  { id: "e4-5b", source: "4", target: "5b", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
-  { id: "e4-5c", source: "4", target: "5c", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
-  { id: "e5a-6", source: "5a", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
-  { id: "e5b-6", source: "5b", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
-  { id: "e5c-6", source: "5c", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
-  { id: "e6-7", source: "6", target: "7", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
+  { id: "e1-2", source: "1", target: "2", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0, transition: "opacity 0.5s ease-in-out" } },
+  { id: "e2-3", source: "2", target: "3", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0, transition: "opacity 0.5s ease-in-out" } },
+  { id: "e3-4", source: "3", target: "4", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0, transition: "opacity 0.5s ease-in-out" } },
+  { id: "e4-5a", source: "4", target: "5a", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0, transition: "opacity 0.5s ease-in-out" } },
+  { id: "e4-5b", source: "4", target: "5b", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0, transition: "opacity 0.5s ease-in-out" } },
+  { id: "e4-5c", source: "4", target: "5c", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0, transition: "opacity 0.5s ease-in-out" } },
+  { id: "e5a-6", source: "5a", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0, transition: "opacity 0.5s ease-in-out" } },
+  { id: "e5b-6", source: "5b", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0, transition: "opacity 0.5s ease-in-out" } },
+  { id: "e5c-6", source: "5c", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0, transition: "opacity 0.5s ease-in-out" } },
+  { id: "e6-7", source: "6", target: "7", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0, transition: "opacity 0.5s ease-in-out" } },
 ];
 
 export default function PlanPage() {
@@ -282,20 +278,21 @@ export default function PlanPage() {
 
   // Thinking phase state
   const [isThinking, setIsThinking] = useState(true);
-  const [currentThinkingStep, setCurrentThinkingStep] = useState(0);
-  const [displayedThinkingSteps, setDisplayedThinkingSteps] = useState<ThinkingStep[]>([]);
+  const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
+  const [displayedMessages, setDisplayedMessages] = useState<ChatMessage[]>([
+    {
+      role: "user",
+      content: intent,
+    },
+  ]);
+  const [collapsedIndices, setCollapsedIndices] = useState<Set<number>>(new Set());
   const [elapsedTime, setElapsedTime] = useState(0);
 
   // UI state
   const [isDrawerOpen, setIsDrawerOpen] = useState(true);
   const [selectedStep, setSelectedStep] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("planning");
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      role: "assistant",
-      content: "Hi! I can help you understand this enrichment workflow. Ask me anything about the steps, decisions, or data sources.",
-    },
-  ]);
+  const [showViewStepsTab, setShowViewStepsTab] = useState(false);
+  const [activeTab, setActiveTab] = useState("chat");
   const [chatInput, setChatInput] = useState("");
 
   // Timer for thinking phase
@@ -308,68 +305,76 @@ export default function PlanPage() {
     return () => clearInterval(interval);
   }, [isThinking]);
 
-  // Thinking step progression
+  // Message progression during thinking
   useEffect(() => {
     if (!isThinking) return;
-    if (currentThinkingStep >= thinkingSteps.length) {
-      setIsThinking(false);
-      setActiveTab("steps");
+    if (currentMessageIndex >= thinkingMessages.length) {
+      // Thinking complete - reveal ALL nodes at once
+      setTimeout(() => {
+        revealAllNodes();
+        setTimeout(() => {
+          setIsThinking(false);
+          setShowViewStepsTab(true);
+          setActiveTab("steps");
+        }, 800);
+      }, 1000);
       return;
     }
 
-    const currentStep = thinkingSteps[currentThinkingStep];
-    const timer = setTimeout(() => {
-      setDisplayedThinkingSteps((prev) => [...prev, currentStep]);
-      setCurrentThinkingStep((i) => i + 1);
+    const currentMessage = thinkingMessages[currentMessageIndex];
+    const delay = currentMessage.isThinking ? 800 : 2500;
 
-      // Reveal nodes as thinking progresses
-      if (currentThinkingStep === 0) {
-        // After first step, show first 2 nodes
-        revealNodes([0, 1]);
-      } else if (currentThinkingStep === 1) {
-        // After second step, show more nodes
-        revealNodes([2, 3, 4]);
-      } else if (currentThinkingStep === 2) {
-        // After third step, show remaining nodes
-        revealNodes([5, 6, 7, 8]);
+    const timer = setTimeout(() => {
+      setDisplayedMessages((prev) => [...prev, currentMessage]);
+
+      // If this is a result message (not thinking) and previous was collapsible, collapse it
+      if (!currentMessage.isThinking && currentMessageIndex > 0) {
+        const prevMessage = thinkingMessages[currentMessageIndex - 1];
+        if (prevMessage.isCollapsible) {
+          setCollapsedIndices(prev => new Set(prev).add(currentMessageIndex));
+        }
       }
-    }, currentThinkingStep === 0 ? 1000 : currentStep.duration);
+
+      setCurrentMessageIndex((i) => i + 1);
+    }, delay);
 
     return () => clearTimeout(timer);
-  }, [currentThinkingStep, isThinking]);
+  }, [currentMessageIndex, isThinking]);
 
-  const revealNodes = (indices: number[]) => {
+  const toggleCollapse = (index: number) => {
+    setCollapsedIndices(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(index)) {
+        newSet.delete(index);
+      } else {
+        newSet.add(index);
+      }
+      return newSet;
+    });
+  };
+
+  const revealAllNodes = () => {
+    // Reveal all nodes at once
     setNodes((nds) =>
-      nds.map((node, idx) => {
-        if (indices.includes(idx)) {
-          return {
-            ...node,
-            style: {
-              ...node.style,
-              opacity: 1,
-              border: "2px solid var(--border-hover)",
-            },
-          };
-        }
-        return node;
-      })
+      nds.map((node) => ({
+        ...node,
+        style: {
+          ...node.style,
+          opacity: 1,
+          border: "2px solid var(--border-hover)",
+        },
+      }))
     );
 
-    // Also reveal corresponding edges
+    // Reveal all edges
     setEdges((eds) =>
-      eds.map((edge) => {
-        const sourceIdx = parseInt(edge.source.replace(/[a-z]/g, "")) - 1;
-        if (indices.includes(sourceIdx)) {
-          return {
-            ...edge,
-            style: {
-              ...edge.style,
-              opacity: 1,
-            },
-          };
-        }
-        return edge;
-      })
+      eds.map((edge) => ({
+        ...edge,
+        style: {
+          ...edge.style,
+          opacity: 1,
+        },
+      }))
     );
   };
 
@@ -428,17 +433,17 @@ export default function PlanPage() {
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim() || isThinking) return;
 
     const newMessages: ChatMessage[] = [
-      ...chatMessages,
+      ...displayedMessages,
       { role: "user", content: chatInput },
       {
         role: "assistant",
         content: "I'm analyzing your question about the workflow. This workflow processes 2,450 transactions, standardizes merchant names using fuzzy matching, and enriches product data from three parallel sources.",
       },
     ];
-    setChatMessages(newMessages);
+    setDisplayedMessages(newMessages);
     setChatInput("");
   };
 
@@ -522,74 +527,100 @@ export default function PlanPage() {
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col h-full">
               <div className="px-4 pt-4 flex-shrink-0">
                 <TabsList className="w-full">
-                  {isThinking && (
-                    <TabsTrigger value="planning" className="flex-1">
-                      Planning
+                  <TabsTrigger value="chat" className="flex-1">
+                    Chat
+                  </TabsTrigger>
+                  {showViewStepsTab && (
+                    <TabsTrigger value="steps" className="flex-1">
+                      View Steps
                     </TabsTrigger>
-                  )}
-                  {!isThinking && (
-                    <>
-                      <TabsTrigger value="steps" className="flex-1">
-                        View Steps
-                      </TabsTrigger>
-                      <TabsTrigger value="chat" className="flex-1">
-                        Chat
-                      </TabsTrigger>
-                    </>
                   )}
                 </TabsList>
               </div>
 
-              {/* Planning Tab - Active during thinking phase */}
-              {isThinking && (
-                <TabsContent value="planning" className="flex-1 overflow-y-auto m-0 p-4">
-                  <div className="mb-6 p-4 rounded-lg bg-[var(--bg-elevated)]">
-                    <p className="text-sm text-[var(--text-primary)] leading-relaxed">
-                      {intent}
-                    </p>
-                  </div>
+              {/* Chat Tab */}
+              <TabsContent value="chat" className="flex-1 flex flex-col m-0 min-h-0">
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {displayedMessages.map((msg, idx) => {
+                    const isCollapsed = collapsedIndices.has(idx + 1);
+                    const isCollapsibleThinking = msg.isCollapsible && msg.isThinking;
 
-                  <div className="space-y-6">
-                    {displayedThinkingSteps.map((step, index) => (
-                      <div key={index} className="pb-6 border-b border-[var(--border-default)]">
-                        <div className="flex items-center justify-between mb-3">
-                          <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-                            {!isThinking && index === displayedThinkingSteps.length - 1 ? "Thinking..." : step.title}
-                          </h3>
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex ${
+                          msg.role === "user" ? "justify-end" : "justify-start"
+                        }`}
+                      >
+                        <div
+                          className={`max-w-[85%] rounded-lg ${
+                            msg.role === "user"
+                              ? "bg-[var(--accent-primary)] text-white px-4 py-2"
+                              : isCollapsibleThinking && isCollapsed
+                              ? "bg-[var(--bg-tertiary)] border border-[var(--border-default)]"
+                              : "bg-[var(--bg-elevated)] text-[var(--text-primary)] px-4 py-2"
+                          }`}
+                        >
+                          {isCollapsibleThinking && isCollapsed ? (
+                            <button
+                              onClick={() => toggleCollapse(idx + 1)}
+                              className="flex items-center gap-2 text-sm text-[var(--text-secondary)] py-2 px-3 w-full hover:text-[var(--text-primary)] transition-colors"
+                            >
+                              <ChevronDown size={16} />
+                              <span>{msg.content}</span>
+                            </button>
+                          ) : (
+                            <>
+                              {isCollapsibleThinking && (
+                                <button
+                                  onClick={() => toggleCollapse(idx + 1)}
+                                  className="flex items-center gap-2 mb-2 text-sm text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+                                >
+                                  <ChevronUp size={16} />
+                                  <span>Collapse</span>
+                                </button>
+                              )}
+                              <p className="text-sm whitespace-pre-line">{msg.content}</p>
+                              {msg.isThinking && idx === displayedMessages.length - 1 && (
+                                <div className="flex items-center gap-1.5 mt-2">
+                                  {[0, 200, 400].map((delay) => (
+                                    <div
+                                      key={delay}
+                                      className="w-1.5 h-1.5 rounded-full animate-pulse bg-[var(--text-tertiary)]"
+                                      style={{
+                                        animationDelay: `${delay}ms`,
+                                        animationDuration: "1.4s",
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          )}
                         </div>
-                        <div className="text-sm leading-relaxed whitespace-pre-line text-[var(--text-secondary)]">
-                          {step.content}
-                        </div>
-                        {index === displayedThinkingSteps.length - 1 && currentThinkingStep < thinkingSteps.length && (
-                          <div className="flex items-center gap-1.5 mt-4">
-                            {[0, 200, 400].map((delay) => (
-                              <div
-                                key={delay}
-                                className="w-1.5 h-1.5 rounded-full animate-pulse bg-[var(--text-tertiary)]"
-                                style={{
-                                  animationDelay: `${delay}ms`,
-                                  animationDuration: "1.4s",
-                                }}
-                              />
-                            ))}
-                          </div>
-                        )}
                       </div>
-                    ))}
+                    );
+                  })}
+                </div>
+                <form onSubmit={handleSendMessage} className="p-4 border-t border-[var(--border-default)] flex-shrink-0">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder={isThinking ? "Planning in progress..." : "Ask about the workflow..."}
+                      disabled={isThinking}
+                      className="flex-1 px-3 py-2 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-default)] text-[var(--text-primary)] text-sm focus:outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
+                    />
+                    <Button type="submit" size="icon" disabled={isThinking}>
+                      <Send size={18} />
+                    </Button>
                   </div>
-
-                  {!isThinking && currentThinkingStep >= thinkingSteps.length && (
-                    <div className="mt-6 p-4 rounded-lg border border-[var(--status-success)] bg-[var(--bg-elevated)]">
-                      <p className="text-sm font-medium text-[var(--status-success)] text-center">
-                        ✓ Workflow plan ready for review
-                      </p>
-                    </div>
-                  )}
-                </TabsContent>
-              )}
+                </form>
+              </TabsContent>
 
               {/* View Steps Tab */}
-              {!isThinking && (
+              {showViewStepsTab && (
                 <TabsContent value="steps" className="flex-1 overflow-y-auto m-0 p-4">
                   {!selectedStep ? (
                     <div className="space-y-3">
@@ -739,46 +770,6 @@ export default function PlanPage() {
                       )}
                     </div>
                   )}
-                </TabsContent>
-              )}
-
-              {/* Chat Tab */}
-              {!isThinking && (
-                <TabsContent value="chat" className="flex-1 flex flex-col m-0 min-h-0">
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {chatMessages.map((msg, idx) => (
-                      <div
-                        key={idx}
-                        className={`flex ${
-                          msg.role === "user" ? "justify-end" : "justify-start"
-                        }`}
-                      >
-                        <div
-                          className={`max-w-[85%] rounded-lg px-4 py-2 ${
-                            msg.role === "user"
-                              ? "bg-[var(--accent-primary)] text-white"
-                              : "bg-[var(--bg-elevated)] text-[var(--text-primary)]"
-                          }`}
-                        >
-                          <p className="text-sm">{msg.content}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <form onSubmit={handleSendMessage} className="p-4 border-t border-[var(--border-default)] flex-shrink-0">
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        placeholder="Ask about the workflow..."
-                        className="flex-1 px-3 py-2 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-default)] text-[var(--text-primary)] text-sm focus:outline-none focus:border-[var(--accent-primary)]"
-                      />
-                      <Button type="submit" size="icon">
-                        <Send size={18} />
-                      </Button>
-                    </div>
-                  </form>
                 </TabsContent>
               )}
             </Tabs>
