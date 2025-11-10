@@ -21,8 +21,8 @@
   --text-muted: #6B7280;
 
   /* Accent colors */
-  --accent-primary: #F97316;
-  --accent-hover: #EA6A0F;
+  --accent-primary: #8c43d0;
+  --accent-hover: #ae63f4;
 
   /* Status colors */
   --status-success: #10B981;
@@ -215,4 +215,31 @@ body {
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* React Flow node customization */
+.react-flow__node {
+  background: rgba(128, 128, 128, 0.3) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: 8px !important;
+  padding: 12px !important;
+  font-size: 14px !important;
+}
+
+.react-flow__node-input {
+  background: rgba(128, 128, 128, 0.3) !important;
+}
+
+.react-flow__node-default {
+  background: rgba(128, 128, 128, 0.3) !important;
+}
+
+.react-flow__node-output {
+  background: rgba(128, 128, 128, 0.3) !important;
+}
+
+.react-flow__node.selected {
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.3) !important;
 }
