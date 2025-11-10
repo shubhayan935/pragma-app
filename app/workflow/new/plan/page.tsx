@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ReactFlow,
   Node,
@@ -35,6 +35,12 @@ interface ChatMessage {
   content: string;
 }
 
+interface ThinkingStep {
+  title: string;
+  content: string;
+  duration: number;
+}
+
 interface WorkflowStep {
   id: string;
   title: string;
@@ -49,6 +55,44 @@ interface WorkflowStep {
     reasoning: string;
   };
 }
+
+const reactFlowOptions = { hideAttribution: true };
+
+const thinkingSteps: ThinkingStep[] = [
+  {
+    title: "Analyzing Schema",
+    content: `I've inspected your transactions table schema. Key columns identified: merchant_name (VARCHAR, high variance), sku_code (VARCHAR), product_name (VARCHAR, 40% null). I'll need to:
+
+1. Run entity resolution on merchant_name to detect variants
+2. Use sku_code as lookup key for product enrichment
+3. Fill product_name, category, price from external sources`,
+    duration: 3000,
+  },
+  {
+    title: "Selecting Enrichment Strategy",
+    content: `For merchant_name, I'll use fuzzy matching (Levenshtein distance < 0.85) combined with business name standardization rules. For sku_code, I'll prioritize:
+1. Internal product catalog (if available)
+2. Amazon Product API
+3. Web search fallback for remaining SKUs
+
+Estimated coverage: 95% for merchants, 88% for products`,
+    duration: 4000,
+  },
+  {
+    title: "Planning Workflow",
+    content: `Building execution graph with 7 nodes:
+→ Load & inspect data
+→ Cluster merchant variants
+→ Unify to canonical names
+→ Extract SKU lookup keys
+→ Fetch product metadata (parallel)
+→ Merge enriched data
+→ Write back results
+
+Ready for your review.`,
+    duration: 4000,
+  },
+];
 
 const workflowSteps: WorkflowStep[] = [
   {
@@ -182,173 +226,70 @@ const workflowSteps: WorkflowStep[] = [
   },
 ];
 
+// Nodes will be revealed progressively during thinking phase
+const createNode = (id: string, label: string, x: number, y: number, visible: boolean): Node => ({
+  id,
+  type: "default",
+  position: { x, y },
+  data: { label },
+  style: {
+    background: visible ? "var(--bg-elevated)" : "transparent",
+    border: visible ? "2px solid var(--border-hover)" : "2px solid transparent",
+    color: "var(--text-primary)",
+    borderRadius: "8px",
+    padding: "12px 20px",
+    fontSize: "14px",
+    fontWeight: "600",
+    opacity: visible ? 1 : 0,
+    transition: "opacity 0.5s ease-in-out, border 0.3s ease-in-out",
+  },
+});
+
 const initialNodes: Node[] = [
-  {
-    id: "1",
-    type: "default",
-    position: { x: 250, y: 50 },
-    data: { label: "Load Data" },
-    style: {
-      background: "var(--bg-elevated)",
-      border: "2px solid var(--border-hover)",
-      color: "var(--text-primary)",
-      borderRadius: "8px",
-      padding: "12px 20px",
-      fontSize: "14px",
-      fontWeight: "600",
-    },
-  },
-  {
-    id: "2",
-    type: "default",
-    position: { x: 250, y: 140 },
-    data: { label: "Cluster Merchants" },
-    style: {
-      background: "var(--bg-secondary)",
-      border: "2px solid var(--border-hover)",
-      color: "var(--text-primary)",
-      borderRadius: "8px",
-      padding: "12px 20px",
-      fontSize: "14px",
-      fontWeight: "600",
-      opacity: 0.5,
-    },
-  },
-  {
-    id: "3",
-    type: "default",
-    position: { x: 250, y: 230 },
-    data: { label: "Unify Names" },
-    style: {
-      background: "var(--bg-secondary)",
-      border: "2px solid var(--border-hover)",
-      color: "var(--text-primary)",
-      borderRadius: "8px",
-      padding: "12px 20px",
-      fontSize: "14px",
-      fontWeight: "600",
-      opacity: 0.4,
-    },
-  },
-  {
-    id: "4",
-    type: "default",
-    position: { x: 250, y: 320 },
-    data: { label: "Extract SKUs" },
-    style: {
-      background: "var(--bg-secondary)",
-      border: "2px solid var(--border-hover)",
-      color: "var(--text-primary)",
-      borderRadius: "8px",
-      padding: "12px 20px",
-      fontSize: "14px",
-      fontWeight: "600",
-      opacity: 0.4,
-    },
-  },
-  {
-    id: "5a",
-    type: "default",
-    position: { x: 100, y: 420 },
-    data: { label: "Catalog" },
-    style: {
-      background: "var(--bg-secondary)",
-      border: "2px solid var(--border-hover)",
-      color: "var(--text-primary)",
-      borderRadius: "8px",
-      padding: "8px 16px",
-      fontSize: "13px",
-      fontWeight: "600",
-      opacity: 0.4,
-    },
-  },
-  {
-    id: "5b",
-    type: "default",
-    position: { x: 250, y: 420 },
-    data: { label: "API" },
-    style: {
-      background: "var(--bg-secondary)",
-      border: "2px solid var(--border-hover)",
-      color: "var(--text-primary)",
-      borderRadius: "8px",
-      padding: "8px 16px",
-      fontSize: "13px",
-      fontWeight: "600",
-      opacity: 0.4,
-    },
-  },
-  {
-    id: "5c",
-    type: "default",
-    position: { x: 370, y: 420 },
-    data: { label: "Web Search" },
-    style: {
-      background: "var(--bg-secondary)",
-      border: "2px solid var(--border-hover)",
-      color: "var(--text-primary)",
-      borderRadius: "8px",
-      padding: "8px 16px",
-      fontSize: "13px",
-      fontWeight: "600",
-      opacity: 0.4,
-    },
-  },
-  {
-    id: "6",
-    type: "default",
-    position: { x: 250, y: 510 },
-    data: { label: "Merge Data" },
-    style: {
-      background: "var(--bg-secondary)",
-      border: "2px solid var(--border-hover)",
-      color: "var(--text-primary)",
-      borderRadius: "8px",
-      padding: "12px 20px",
-      fontSize: "14px",
-      fontWeight: "600",
-      opacity: 0.4,
-    },
-  },
-  {
-    id: "7",
-    type: "default",
-    position: { x: 250, y: 600 },
-    data: { label: "Write Back" },
-    style: {
-      background: "var(--bg-secondary)",
-      border: "2px solid var(--border-hover)",
-      color: "var(--text-primary)",
-      borderRadius: "8px",
-      padding: "12px 20px",
-      fontSize: "14px",
-      fontWeight: "600",
-      opacity: 0.4,
-    },
-  },
+  createNode("1", "Load Data", 250, 50, false),
+  createNode("2", "Cluster Merchants", 250, 140, false),
+  createNode("3", "Unify Names", 250, 230, false),
+  createNode("4", "Extract SKUs", 250, 320, false),
+  createNode("5a", "Catalog", 100, 420, false),
+  createNode("5b", "API", 250, 420, false),
+  createNode("5c", "Web Search", 370, 420, false),
+  createNode("6", "Merge Data", 250, 510, false),
+  createNode("7", "Write Back", 250, 600, false),
 ];
 
 const initialEdges: Edge[] = [
-  { id: "e1-2", source: "1", target: "2", style: { stroke: "var(--border-hover)", strokeWidth: 2 } },
-  { id: "e2-3", source: "2", target: "3", style: { stroke: "var(--border-hover)", strokeWidth: 2 } },
-  { id: "e3-4", source: "3", target: "4", style: { stroke: "var(--border-hover)", strokeWidth: 2 } },
-  { id: "e4-5a", source: "4", target: "5a", style: { stroke: "var(--border-hover)", strokeWidth: 2 } },
-  { id: "e4-5b", source: "4", target: "5b", style: { stroke: "var(--border-hover)", strokeWidth: 2 } },
-  { id: "e4-5c", source: "4", target: "5c", style: { stroke: "var(--border-hover)", strokeWidth: 2 } },
-  { id: "e5a-6", source: "5a", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2 } },
-  { id: "e5b-6", source: "5b", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2 } },
-  { id: "e5c-6", source: "5c", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2 } },
-  { id: "e6-7", source: "6", target: "7", style: { stroke: "var(--border-hover)", strokeWidth: 2 } },
+  { id: "e1-2", source: "1", target: "2", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
+  { id: "e2-3", source: "2", target: "3", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
+  { id: "e3-4", source: "3", target: "4", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
+  { id: "e4-5a", source: "4", target: "5a", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
+  { id: "e4-5b", source: "4", target: "5b", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
+  { id: "e4-5c", source: "4", target: "5c", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
+  { id: "e5a-6", source: "5a", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
+  { id: "e5b-6", source: "5b", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
+  { id: "e5c-6", source: "5c", target: "6", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
+  { id: "e6-7", source: "6", target: "7", style: { stroke: "var(--border-hover)", strokeWidth: 2, opacity: 0 } },
 ];
 
 export default function PlanPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const intent = searchParams.get("intent") || "Enrich merchant data";
+
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionStep, setExecutionStep] = useState(0);
+
+  // Thinking phase state
+  const [isThinking, setIsThinking] = useState(true);
+  const [currentThinkingStep, setCurrentThinkingStep] = useState(0);
+  const [displayedThinkingSteps, setDisplayedThinkingSteps] = useState<ThinkingStep[]>([]);
+  const [elapsedTime, setElapsedTime] = useState(0);
+
+  // UI state
   const [isDrawerOpen, setIsDrawerOpen] = useState(true);
   const [selectedStep, setSelectedStep] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("planning");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
@@ -356,6 +297,81 @@ export default function PlanPage() {
     },
   ]);
   const [chatInput, setChatInput] = useState("");
+
+  // Timer for thinking phase
+  useEffect(() => {
+    if (!isThinking) return;
+
+    const interval = setInterval(() => {
+      setElapsedTime((t) => t + 0.1);
+    }, 100);
+    return () => clearInterval(interval);
+  }, [isThinking]);
+
+  // Thinking step progression
+  useEffect(() => {
+    if (!isThinking) return;
+    if (currentThinkingStep >= thinkingSteps.length) {
+      setIsThinking(false);
+      setActiveTab("steps");
+      return;
+    }
+
+    const currentStep = thinkingSteps[currentThinkingStep];
+    const timer = setTimeout(() => {
+      setDisplayedThinkingSteps((prev) => [...prev, currentStep]);
+      setCurrentThinkingStep((i) => i + 1);
+
+      // Reveal nodes as thinking progresses
+      if (currentThinkingStep === 0) {
+        // After first step, show first 2 nodes
+        revealNodes([0, 1]);
+      } else if (currentThinkingStep === 1) {
+        // After second step, show more nodes
+        revealNodes([2, 3, 4]);
+      } else if (currentThinkingStep === 2) {
+        // After third step, show remaining nodes
+        revealNodes([5, 6, 7, 8]);
+      }
+    }, currentThinkingStep === 0 ? 1000 : currentStep.duration);
+
+    return () => clearTimeout(timer);
+  }, [currentThinkingStep, isThinking]);
+
+  const revealNodes = (indices: number[]) => {
+    setNodes((nds) =>
+      nds.map((node, idx) => {
+        if (indices.includes(idx)) {
+          return {
+            ...node,
+            style: {
+              ...node.style,
+              opacity: 1,
+              border: "2px solid var(--border-hover)",
+            },
+          };
+        }
+        return node;
+      })
+    );
+
+    // Also reveal corresponding edges
+    setEdges((eds) =>
+      eds.map((edge) => {
+        const sourceIdx = parseInt(edge.source.replace(/[a-z]/g, "")) - 1;
+        if (indices.includes(sourceIdx)) {
+          return {
+            ...edge,
+            style: {
+              ...edge.style,
+              opacity: 1,
+            },
+          };
+        }
+        return edge;
+      })
+    );
+  };
 
   const startExecution = () => {
     setIsExecuting(true);
@@ -374,7 +390,6 @@ export default function PlanPage() {
     }
 
     const timer = setTimeout(() => {
-      // Update node opacity
       const nodeId = (executionStep + 1).toString();
       setNodes((nds) =>
         nds.map((node) => {
@@ -389,7 +404,6 @@ export default function PlanPage() {
               },
             };
           }
-          // Keep previously completed nodes fully opaque
           const prevNodeNum = parseInt(node.id.replace(/[a-z]/g, ""));
           if (prevNodeNum <= executionStep) {
             return {
@@ -442,22 +456,31 @@ export default function PlanPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold text-[var(--text-primary)]">
-              Workflow Plan
+              {isThinking ? "Planning Workflow..." : "Workflow Plan"}
             </h1>
             <p className="text-sm text-[var(--text-tertiary)] mt-1">
-              7 STEPS • ~{totalTime} SEC ESTIMATED
+              {isThinking ? (
+                <span className="flex items-center gap-2">
+                  <Clock size={14} />
+                  {elapsedTime.toFixed(1)}s
+                </span>
+              ) : (
+                `7 STEPS • ~${totalTime} SEC ESTIMATED`
+              )}
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <Button variant="outline" disabled={isExecuting}>
-              <Edit size={16} className="mr-2" />
-              Edit
-            </Button>
-            <Button onClick={startExecution} disabled={isExecuting}>
-              <Play size={16} className="mr-2" />
-              {isExecuting ? "Executing..." : "Approve"}
-            </Button>
-          </div>
+          {!isThinking && (
+            <div className="flex items-center gap-3">
+              <Button variant="outline" disabled={isExecuting}>
+                <Edit size={16} className="mr-2" />
+                Edit
+              </Button>
+              <Button onClick={startExecution} disabled={isExecuting}>
+                <Play size={16} className="mr-2" />
+                {isExecuting ? "Executing..." : "Approve"}
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -474,21 +497,15 @@ export default function PlanPage() {
             style={{
               background: "var(--bg-primary)",
             }}
+            proOptions={reactFlowOptions}
           >
             <Background
               variant={BackgroundVariant.Dots}
               gap={20}
               size={1}
-              color="rgba(255, 255, 255, 0.05)"
+              color="rgba(255, 255, 255, 0.35)"
               style={{
                 background: "var(--bg-primary)",
-              }}
-            />
-            <Controls
-              style={{
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border-default)",
-                borderRadius: "8px",
               }}
             />
           </ReactFlow>
@@ -502,226 +519,289 @@ export default function PlanPage() {
           style={{ overflow: isDrawerOpen ? "visible" : "hidden" }}
         >
           {isDrawerOpen && (
-            <Tabs defaultValue="steps" className="flex-1 flex flex-col h-full">
-              <div className="border-b border-[var(--border-default)] px-4 pt-4 flex-shrink-0">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col h-full">
+              <div className="px-4 pt-4 flex-shrink-0">
                 <TabsList className="w-full">
-                  <TabsTrigger value="chat" className="flex-1">
-                    Chat
-                  </TabsTrigger>
-                  <TabsTrigger value="steps" className="flex-1">
-                    View Enrichment Steps
-                  </TabsTrigger>
+                  {isThinking && (
+                    <TabsTrigger value="planning" className="flex-1">
+                      Planning
+                    </TabsTrigger>
+                  )}
+                  {!isThinking && (
+                    <>
+                      <TabsTrigger value="steps" className="flex-1">
+                        View Steps
+                      </TabsTrigger>
+                      <TabsTrigger value="chat" className="flex-1">
+                        Chat
+                      </TabsTrigger>
+                    </>
+                  )}
                 </TabsList>
               </div>
 
-              {/* Chat Tab */}
-              <TabsContent value="chat" className="flex-1 flex flex-col m-0 min-h-0">
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {chatMessages.map((msg, idx) => (
-                    <div
-                      key={idx}
-                      className={`flex ${
-                        msg.role === "user" ? "justify-end" : "justify-start"
-                      }`}
-                    >
-                      <div
-                        className={`max-w-[85%] rounded-lg px-4 py-2 ${
-                          msg.role === "user"
-                            ? "bg-[var(--accent-primary)] text-white"
-                            : "bg-[var(--bg-elevated)] text-[var(--text-primary)]"
-                        }`}
-                      >
-                        <p className="text-sm">{msg.content}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <form onSubmit={handleSendMessage} className="p-4 border-t border-[var(--border-default)] flex-shrink-0">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      placeholder="Ask about the workflow..."
-                      className="flex-1 px-3 py-2 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-default)] text-[var(--text-primary)] text-sm focus:outline-none focus:border-[var(--accent-primary)]"
-                    />
-                    <Button type="submit" size="icon">
-                      <Send size={18} />
-                    </Button>
+              {/* Planning Tab - Active during thinking phase */}
+              {isThinking && (
+                <TabsContent value="planning" className="flex-1 overflow-y-auto m-0 p-4">
+                  <div className="mb-6 p-4 rounded-lg bg-[var(--bg-elevated)]">
+                    <p className="text-sm text-[var(--text-primary)] leading-relaxed">
+                      {intent}
+                    </p>
                   </div>
-                </form>
-              </TabsContent>
+
+                  <div className="space-y-6">
+                    {displayedThinkingSteps.map((step, index) => (
+                      <div key={index} className="pb-6 border-b border-[var(--border-default)]">
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+                            {!isThinking && index === displayedThinkingSteps.length - 1 ? "Thinking..." : step.title}
+                          </h3>
+                        </div>
+                        <div className="text-sm leading-relaxed whitespace-pre-line text-[var(--text-secondary)]">
+                          {step.content}
+                        </div>
+                        {index === displayedThinkingSteps.length - 1 && currentThinkingStep < thinkingSteps.length && (
+                          <div className="flex items-center gap-1.5 mt-4">
+                            {[0, 200, 400].map((delay) => (
+                              <div
+                                key={delay}
+                                className="w-1.5 h-1.5 rounded-full animate-pulse bg-[var(--text-tertiary)]"
+                                style={{
+                                  animationDelay: `${delay}ms`,
+                                  animationDuration: "1.4s",
+                                }}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {!isThinking && currentThinkingStep >= thinkingSteps.length && (
+                    <div className="mt-6 p-4 rounded-lg border border-[var(--status-success)] bg-[var(--bg-elevated)]">
+                      <p className="text-sm font-medium text-[var(--status-success)] text-center">
+                        ✓ Workflow plan ready for review
+                      </p>
+                    </div>
+                  )}
+                </TabsContent>
+              )}
 
               {/* View Steps Tab */}
-              <TabsContent value="steps" className="flex-1 overflow-y-auto m-0 p-4">
-                {!selectedStep ? (
-                  <div className="space-y-3">
-                    {workflowSteps.map((step, index) => {
-                      const Icon = step.icon;
-                      return (
-                        <button
-                          key={step.id}
-                          onClick={() => setSelectedStep(step.id)}
-                          className={`w-full text-left p-4 rounded-lg border transition-all hover:border-[var(--border-hover)] ${
-                            index <= executionStep && isExecuting
-                              ? "border-[var(--accent-primary)] bg-[var(--bg-elevated)]"
-                              : "border-[var(--border-default)] bg-[var(--bg-tertiary)]"
-                          }`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div
-                              className={`mt-0.5 p-2 rounded-lg ${
-                                index < executionStep && isExecuting
-                                  ? "bg-[var(--status-success)]"
-                                  : index === executionStep && isExecuting
-                                  ? "bg-[var(--accent-primary)]"
-                                  : "bg-[var(--bg-secondary)]"
-                              }`}
-                            >
-                              <Icon
-                                size={16}
-                                className={
-                                  index <= executionStep && isExecuting
-                                    ? "text-white"
-                                    : "text-[var(--text-muted)]"
-                                }
-                              />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between mb-1">
-                                <h3 className="font-medium text-[var(--text-primary)]">
-                                  {index + 1}. {step.title}
-                                </h3>
-                                <ChevronRight size={18} className="text-[var(--text-tertiary)]" />
+              {!isThinking && (
+                <TabsContent value="steps" className="flex-1 overflow-y-auto m-0 p-4">
+                  {!selectedStep ? (
+                    <div className="space-y-3">
+                      {workflowSteps.map((step, index) => {
+                        const Icon = step.icon;
+                        return (
+                          <button
+                            key={step.id}
+                            onClick={() => setSelectedStep(step.id)}
+                            className={`w-full text-left p-4 rounded-lg border transition-all hover:border-[var(--border-hover)] ${
+                              index <= executionStep && isExecuting
+                                ? "border-[var(--accent-primary)] bg-[var(--bg-elevated)]"
+                                : "border-[var(--border-default)] bg-[var(--bg-tertiary)]"
+                            }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div
+                                className={`mt-0.5 p-2 rounded-lg ${
+                                  index < executionStep && isExecuting
+                                    ? "bg-[var(--status-success)]"
+                                    : index === executionStep && isExecuting
+                                    ? "bg-[var(--accent-primary)]"
+                                    : "bg-[var(--bg-secondary)]"
+                                }`}
+                              >
+                                <Icon
+                                  size={16}
+                                  className={
+                                    index <= executionStep && isExecuting
+                                      ? "text-white"
+                                      : "text-[var(--text-muted)]"
+                                  }
+                                />
                               </div>
-                              <p className="text-sm text-[var(--text-tertiary)]">
-                                {step.description}
-                              </p>
-                              <span className="text-xs font-mono text-[var(--text-muted)] flex items-center gap-1 mt-2">
-                                <Clock size={12} />
-                                {step.estimatedTime}
-                              </span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-1">
+                                  <h3 className="font-medium text-[var(--text-primary)]">
+                                    {index + 1}. {step.title}
+                                  </h3>
+                                  <ChevronRight size={18} className="text-[var(--text-tertiary)]" />
+                                </div>
+                                <p className="text-sm text-[var(--text-tertiary)]">
+                                  {step.description}
+                                </p>
+                                <span className="text-xs font-mono text-[var(--text-muted)] flex items-center gap-1 mt-2">
+                                  <Clock size={12} />
+                                  {step.estimatedTime}
+                                </span>
+                              </div>
                             </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <button
-                      onClick={() => setSelectedStep(null)}
-                      className="flex items-center gap-2 text-sm text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
-                    >
-                      <ChevronLeft size={16} />
-                      Back to all steps
-                    </button>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <button
+                        onClick={() => setSelectedStep(null)}
+                        className="flex items-center gap-2 text-sm text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+                      >
+                        <ChevronLeft size={16} />
+                        Back to all steps
+                      </button>
 
-                    {selectedStepData && (
-                      <div className="space-y-4">
-                        <div>
-                          <div className="flex items-start gap-3 mb-4">
-                            <div
-                              className={`p-3 rounded-lg ${
-                                selectedStepData.status === "completed"
-                                  ? "bg-[var(--status-success)]"
-                                  : selectedStepData.status === "in_progress"
-                                  ? "bg-[var(--accent-primary)]"
-                                  : "bg-[var(--bg-tertiary)]"
-                              }`}
-                            >
-                              <selectedStepData.icon
-                                size={20}
-                                className={
-                                  selectedStepData.status === "pending"
-                                    ? "text-[var(--text-muted)]"
-                                    : "text-white"
-                                }
-                              />
-                            </div>
-                            <div>
-                              <h2 className="text-lg font-semibold text-[var(--text-primary)]">
-                                {selectedStepData.title}
-                              </h2>
-                              <p className="text-sm text-[var(--text-tertiary)] mt-1">
-                                {selectedStepData.description}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
+                      {selectedStepData && (
                         <div className="space-y-4">
                           <div>
-                            <h3 className="text-xs uppercase font-medium tracking-wider text-[var(--text-muted)] mb-2">
-                              Reasoning
-                            </h3>
-                            <p className="text-sm text-[var(--text-secondary)] bg-[var(--bg-elevated)] p-3 rounded-lg">
-                              {selectedStepData.details.reasoning}
-                            </p>
-                          </div>
-
-                          <div>
-                            <h3 className="text-xs uppercase font-medium tracking-wider text-[var(--text-muted)] mb-2">
-                              Decisions
-                            </h3>
-                            <ul className="space-y-2">
-                              {selectedStepData.details.decisions.map((decision, idx) => (
-                                <li
-                                  key={idx}
-                                  className="text-sm text-[var(--text-secondary)] bg-[var(--bg-elevated)] p-3 rounded-lg flex items-start gap-2"
-                                >
-                                  <CheckCircle2
-                                    size={16}
-                                    className="text-[var(--status-success)] mt-0.5 shrink-0"
-                                  />
-                                  <span>{decision}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-
-                          {selectedStepData.details.queries.length > 0 && (
-                            <div>
-                              <h3 className="text-xs uppercase font-medium tracking-wider text-[var(--text-muted)] mb-2">
-                                Queries
-                              </h3>
-                              <div className="space-y-2">
-                                {selectedStepData.details.queries.map((query, idx) => (
-                                  <pre
-                                    key={idx}
-                                    className="text-xs font-mono text-[var(--text-secondary)] bg-[var(--bg-tertiary)] p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-words"
-                                  >
-                                    {query}
-                                  </pre>
-                                ))}
+                            <div className="flex items-start gap-3 mb-4">
+                              <div
+                                className={`p-3 rounded-lg ${
+                                  selectedStepData.status === "completed"
+                                    ? "bg-[var(--status-success)]"
+                                    : selectedStepData.status === "in_progress"
+                                    ? "bg-[var(--accent-primary)]"
+                                    : "bg-[var(--bg-tertiary)]"
+                                }`}
+                              >
+                                <selectedStepData.icon
+                                  size={20}
+                                  className={
+                                    selectedStepData.status === "pending"
+                                      ? "text-[var(--text-muted)]"
+                                      : "text-white"
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+                                  {selectedStepData.title}
+                                </h2>
+                                <p className="text-sm text-[var(--text-tertiary)] mt-1">
+                                  {selectedStepData.description}
+                                </p>
                               </div>
                             </div>
-                          )}
+                          </div>
+
+                          <div className="space-y-4">
+                            <div>
+                              <h3 className="text-xs uppercase font-medium tracking-wider text-[var(--text-muted)] mb-2">
+                                Reasoning
+                              </h3>
+                              <p className="text-sm text-[var(--text-secondary)] bg-[var(--bg-elevated)] p-3 rounded-lg">
+                                {selectedStepData.details.reasoning}
+                              </p>
+                            </div>
+
+                            <div>
+                              <h3 className="text-xs uppercase font-medium tracking-wider text-[var(--text-muted)] mb-2">
+                                Decisions
+                              </h3>
+                              <ul className="space-y-2">
+                                {selectedStepData.details.decisions.map((decision, idx) => (
+                                  <li
+                                    key={idx}
+                                    className="text-sm text-[var(--text-secondary)] bg-[var(--bg-elevated)] p-3 rounded-lg flex items-start gap-2"
+                                  >
+                                    <CheckCircle2
+                                      size={16}
+                                      className="text-[var(--status-success)] mt-0.5 shrink-0"
+                                    />
+                                    <span>{decision}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+
+                            {selectedStepData.details.queries.length > 0 && (
+                              <div>
+                                <h3 className="text-xs uppercase font-medium tracking-wider text-[var(--text-muted)] mb-2">
+                                  Queries
+                                </h3>
+                                <div className="space-y-2">
+                                  {selectedStepData.details.queries.map((query, idx) => (
+                                    <pre
+                                      key={idx}
+                                      className="text-xs font-mono text-[var(--text-secondary)] bg-[var(--bg-tertiary)] p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-words"
+                                    >
+                                      {query}
+                                    </pre>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </TabsContent>
+              )}
+
+              {/* Chat Tab */}
+              {!isThinking && (
+                <TabsContent value="chat" className="flex-1 flex flex-col m-0 min-h-0">
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {chatMessages.map((msg, idx) => (
+                      <div
+                        key={idx}
+                        className={`flex ${
+                          msg.role === "user" ? "justify-end" : "justify-start"
+                        }`}
+                      >
+                        <div
+                          className={`max-w-[85%] rounded-lg px-4 py-2 ${
+                            msg.role === "user"
+                              ? "bg-[var(--accent-primary)] text-white"
+                              : "bg-[var(--bg-elevated)] text-[var(--text-primary)]"
+                          }`}
+                        >
+                          <p className="text-sm">{msg.content}</p>
                         </div>
                       </div>
-                    )}
+                    ))}
                   </div>
-                )}
-              </TabsContent>
+                  <form onSubmit={handleSendMessage} className="p-4 border-t border-[var(--border-default)] flex-shrink-0">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        placeholder="Ask about the workflow..."
+                        className="flex-1 px-3 py-2 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-default)] text-[var(--text-primary)] text-sm focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                      <Button type="submit" size="icon">
+                        <Send size={18} />
+                      </Button>
+                    </div>
+                  </form>
+                </TabsContent>
+              )}
             </Tabs>
           )}
         </div>
 
         {/* Drawer Toggle Button */}
-        <button
-          onClick={() => setIsDrawerOpen(!isDrawerOpen)}
-          className="absolute top-1/2 -translate-y-1/2 bg-[var(--bg-secondary)] border border-[var(--border-default)] rounded-l-lg p-2 hover:bg-[var(--bg-elevated)] transition-colors z-10"
-          style={{
-            right: isDrawerOpen ? "480px" : "0",
-            transition: "right 300ms",
-          }}
-        >
-          {isDrawerOpen ? (
-            <ChevronRight size={20} className="text-[var(--text-tertiary)]" />
-          ) : (
-            <ChevronLeft size={20} className="text-[var(--text-tertiary)]" />
-          )}
-        </button>
+        {!isThinking && (
+          <button
+            onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+            className="absolute top-1/2 -translate-y-1/2 bg-[var(--bg-secondary)] border border-[var(--border-default)] rounded-l-lg p-2 hover:bg-[var(--bg-elevated)] transition-colors z-10"
+            style={{
+              right: isDrawerOpen ? "480px" : "0",
+              transition: "right 300ms",
+            }}
+          >
+            {isDrawerOpen ? (
+              <ChevronRight size={20} className="text-[var(--text-tertiary)]" />
+            ) : (
+              <ChevronLeft size={20} className="text-[var(--text-tertiary)]" />
+            )}
+          </button>
+        )}
       </div>
     </div>
   );
