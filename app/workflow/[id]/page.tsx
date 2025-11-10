@@ -401,7 +401,7 @@ function RunningWorkflowView({ workflowId }: { workflowId: string }) {
   ];
 
   const [nodes, setNodes, onNodesChange] = useNodesState(runningNodes);
-  const [edges, , onEdgesChange] = useEdgesState(runningEdges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(runningEdges);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [changeInput, setChangeInput] = useState("");
@@ -415,6 +415,9 @@ function RunningWorkflowView({ workflowId }: { workflowId: string }) {
 
   const handlePropagateChanges = async () => {
     if (!changeInput.trim() || !selectedNode) return;
+
+    const nodeNum = parseInt(selectedNode.replace(/[a-z]/g, ""));
+    const isRevert = nodeNum <= currentStep; // Changing a completed or currently executing node
 
     setIsPropagating(true);
     setDialogOpen(false);
@@ -431,56 +434,194 @@ function RunningWorkflowView({ workflowId }: { workflowId: string }) {
     // Simulate AI thinking
     await new Promise((resolve) => setTimeout(resolve, 2500));
 
+    // If reverting a completed node, first convert it from completed to plan
+    if (isRevert && selectedNode && nodePlans[selectedNode]?.completed) {
+      // Convert completed data to plan format for the reverted node
+      const completedData = nodePlans[selectedNode].completed!;
+      nodePlans[selectedNode].plan = {
+        decisions: completedData.decisions,
+        queries: completedData.queries,
+        reasoning: "This step is being re-planned with modifications. Previous execution has been reverted."
+      };
+      delete nodePlans[selectedNode].completed;
+    }
+
     // Detect specific change prompts and modify the graph accordingly
     const inputLower = changeInput.toLowerCase();
 
     // Hardcoded change detection for node 2 (Cluster Merchants)
     if (selectedNode === "2" && (inputLower.includes("threshold") || inputLower.includes("0.9") || inputLower.includes("90"))) {
       // User wants to increase clustering threshold to 0.9
-      // Update node 2 data
-      nodePlans["2"].completed!.decisions[0] = "Selected Levenshtein distance algorithm with threshold 0.90 (increased from 0.85)";
-      nodePlans["2"].completed!.decisions[2] = "Clustered into 412 canonical merchant groups (reduced from 487 due to stricter matching)";
-      nodePlans["2"].completed!.decisions[5] = "Average cluster size: 5.3 variants per canonical name (increased from 4.5)";
 
-      // Update node 3 (Unify Names) to reflect the change
-      nodePlans["3"].plan!.decisions[0] = "Apply canonical names from updated clustering (412 groups with 0.90 threshold)";
-      nodePlans["3"].plan!.reasoning = "With the increased threshold of 0.90, clustering is more conservative, resulting in 412 canonical groups instead of 487. This means fewer aggressive merges, reducing the risk of incorrectly combining distinct merchants. The trade-off is slightly lower consolidation but higher accuracy. Manual review cases reduced to 15 (from 23) due to higher confidence threshold.";
+      // Update node 2
+      nodePlans["2"].plan = {
+        decisions: [
+          "Selected Levenshtein distance algorithm with threshold 0.90 (increased from 0.85)",
+          "Found 2,183 unique merchant name variants",
+          "Will cluster into approximately 412 canonical merchant groups (more conservative due to stricter matching)",
+          "Applied business name normalization rules (Inc., LLC, Corp.)",
+          "Resolve ambiguous cases using frequency voting",
+          "Average cluster size: ~5.3 variants per canonical name (larger clusters)",
+        ],
+        queries: [
+          "SELECT DISTINCT merchant_name, COUNT(*) as frequency FROM transactions GROUP BY merchant_name",
+          "-- Fuzzy matching using Levenshtein distance with 0.90 threshold\nSELECT m1.merchant_name, m2.merchant_name, levenshtein(m1.merchant_name, m2.merchant_name) as distance\nFROM merchants m1, merchants m2\nWHERE levenshtein(m1.merchant_name, m2.merchant_name) / greatest(length(m1.merchant_name), length(m2.merchant_name)) >= 0.90",
+        ],
+        reasoning: "Increasing threshold to 0.90 makes clustering more conservative, reducing false positives where distinct merchants might be incorrectly merged. This results in approximately 412 canonical groups (down from 487), meaning larger average cluster sizes but higher confidence in each merge. Trade-off: slightly lower consolidation but significantly higher accuracy. Expected manual review cases: ~15 (down from 23)."
+      };
+      delete nodePlans["2"].completed;
 
-      // Update node labels to show they've changed
-      setNodes((nds) =>
-        nds.map((n) => {
-          if (n.id === "2") {
-            return {
-              ...n,
-              data: { label: "Cluster Merchants (0.90)" },
-              style: { opacity: 1, border: "2px solid #10B981", boxShadow: "0 0 0 3px rgba(16, 185, 129, 0.2)" }
-            };
-          } else if (n.id === "3") {
-            return {
-              ...n,
-              data: { label: "Unify Names (412 groups)" },
-              style: { opacity: 0.5, border: "2px solid #F59E0B" }
-            };
-          } else if (parseInt(n.id.replace(/[a-z]/g, "")) > 3) {
-            return { ...n, style: { ...n.style, opacity: 0.25 } };
-          }
-          return n;
-        })
-      );
+      // Add NEW node: Validate Clusters (2a)
+      nodePlans["2a"] = {
+        label: "Validate Clusters",
+        plan: {
+          decisions: [
+            "Run quality validation on 412 merchant clusters",
+            "Check for potential false negatives (merchants that should be merged)",
+            "Verify no false positives (distinct merchants incorrectly merged)",
+            "Calculate cluster confidence scores based on edit distance distribution",
+            "Flag clusters with low confidence (<75%) for manual review",
+            "Generate validation report with statistics",
+          ],
+          queries: [
+            "-- Calculate intra-cluster similarity scores\nSELECT cluster_id, AVG(similarity_score) as avg_similarity, MIN(similarity_score) as min_similarity\nFROM cluster_members\nGROUP BY cluster_id",
+            "-- Identify potential false negatives (high similarity but different clusters)\nSELECT c1.canonical_name, c2.canonical_name, levenshtein(c1.canonical_name, c2.canonical_name) as distance\nFROM clusters c1, clusters c2\nWHERE c1.id != c2.id AND levenshtein(c1.canonical_name, c2.canonical_name) / greatest(length(c1.canonical_name), length(c2.canonical_name)) >= 0.85",
+          ],
+          reasoning: "With the higher 0.90 threshold, adding a validation step ensures we didn't miss valid merges (false negatives). This quality check generates confidence scores and flags edge cases, providing transparency and allowing data quality review before proceeding with unification. Expected to flag 8-12 clusters for review."
+        }
+      };
+
+      // Update node 3 (Unify Names) to reflect the change and reference the new validation step
+      nodePlans["3"].plan!.decisions = [
+        "Apply canonical names from validated clustering (412 groups, 0.90 threshold)",
+        "Use frequency-based voting for conflict resolution",
+        "Preserve original names in merchant_name_original column",
+        "Update merchant_canonical column with standardized names",
+        "Apply confidence scores from validation step to flag uncertain matches",
+        "Generate merge audit log with before/after snapshots",
+      ];
+      nodePlans["3"].plan!.reasoning = "With the increased threshold of 0.90 and validation step, clustering is more conservative with quality guarantees. 412 canonical groups (vs 487 original) means fewer aggressive merges but higher accuracy. Validation confidence scores ensure uncertain matches are flagged. Manual review cases reduced to ~8-12 (from 23) due to both higher threshold and validation filtering.";
+
+      // Update node 4 reasoning to account for better merchant data
+      nodePlans["4"].plan!.reasoning += " The improved merchant clustering (0.90 threshold with validation) provides cleaner merchant data, which may improve SKU pattern recognition when merchants have standardized naming.";
+
+      // Completely rebuild the nodes array with the new node
+      const newNodes: Node[] = [
+        {
+          id: "1",
+          type: "input",
+          position: { x: 250, y: 50 },
+          data: { label: "Load Data" },
+          style: { opacity: 1 },
+        },
+        {
+          id: "2",
+          type: "default",
+          position: { x: 250, y: 150 },
+          data: { label: "Cluster Merchants" },
+          style: { opacity: 1, border: "2px solid #10B981", boxShadow: "0 0 0 3px rgba(16, 185, 129, 0.2)" }
+        },
+        {
+          id: "2a",
+          type: "default",
+          position: { x: 250, y: 250 },
+          data: { label: "Validate Clusters" },
+          style: { opacity: 1, border: "2px solid #3B82F6", boxShadow: "0 0 0 2px rgba(59, 130, 246, 0.2)" }
+        },
+        {
+          id: "3",
+          type: "default",
+          position: { x: 250, y: 350 },
+          data: { label: "Unify Names" },
+          style: { opacity: 1, border: "2px solid #F59E0B", boxShadow: "0 0 0 3px rgba(245, 158, 11, 0.2)" }
+        },
+        {
+          id: "4",
+          type: "default",
+          position: { x: 250, y: 460 },
+          data: { label: "Extract SKUs" },
+          style: { opacity: 0.4 },
+        },
+        {
+          id: "5a",
+          type: "default",
+          position: { x: 80, y: 570 },
+          data: { label: "Catalog" },
+          style: { opacity: 0.4 },
+        },
+        {
+          id: "5b",
+          type: "default",
+          position: { x: 250, y: 570 },
+          data: { label: "API" },
+          style: { opacity: 0.4 },
+        },
+        {
+          id: "5c",
+          type: "default",
+          position: { x: 420, y: 570 },
+          data: { label: "Web Search" },
+          style: { opacity: 0.4 },
+        },
+        {
+          id: "6",
+          type: "default",
+          position: { x: 250, y: 680 },
+          data: { label: "Merge Data" },
+          style: { opacity: 0.4 },
+        },
+        {
+          id: "7",
+          type: "output",
+          position: { x: 250, y: 780 },
+          data: { label: "Write Back" },
+          style: { opacity: 0.4 },
+        },
+      ];
+
+      const newEdges: Edge[] = [
+        { id: "e1-2", source: "1", target: "2", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 1 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+        { id: "e2-2a", source: "2", target: "2a", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 1 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+        { id: "e2a-3", source: "2a", target: "3", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 1 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+        { id: "e3-4", source: "3", target: "4", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+        { id: "e4-5a", source: "4", target: "5a", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+        { id: "e4-5b", source: "4", target: "5b", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+        { id: "e4-5c", source: "4", target: "5c", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+        { id: "e5a-6", source: "5a", target: "6", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+        { id: "e5b-6", source: "5b", target: "6", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+        { id: "e5c-6", source: "5c", target: "6", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+        { id: "e6-7", source: "6", target: "7", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+      ];
+
+      setNodes(newNodes);
+      setEdges(newEdges);
     }
     // Hardcoded change detection for node 2 - different algorithm
     else if (selectedNode === "2" && (inputLower.includes("algorithm") || inputLower.includes("jaro") || inputLower.includes("soundex"))) {
       // User wants to use a different algorithm
-      nodePlans["2"].completed!.decisions[0] = "Selected Jaro-Winkler distance algorithm with threshold 0.85 (changed from Levenshtein)";
-      nodePlans["2"].completed!.decisions[2] = "Clustered into 501 canonical merchant groups (slightly more than Levenshtein due to phonetic bias)";
-      nodePlans["2"].completed!.decisions[3] = "Applied business name normalization rules and phonetic matching (Inc., LLC, Corp.)";
-      nodePlans["2"].completed!.actions[1] = "✓ Applied Jaro-Winkler algorithm with phonetic bias (1.4s processing time)";
+      nodePlans["2"].plan = {
+        decisions: [
+          "Selected Jaro-Winkler distance algorithm with threshold 0.85 (changed from Levenshtein)",
+          "Found 2,183 unique merchant name variants",
+          "Will cluster into approximately 501 canonical merchant groups (phonetic bias)",
+          "Applied business name normalization rules and phonetic matching (Inc., LLC, Corp.)",
+          "Resolve ambiguous cases using frequency voting with phonetic similarity",
+          "Average cluster size: ~4.4 variants per canonical name",
+        ],
+        queries: [
+          "SELECT DISTINCT merchant_name, COUNT(*) as frequency FROM transactions GROUP BY merchant_name",
+          "-- Fuzzy matching using Jaro-Winkler distance\nSELECT m1.merchant_name, m2.merchant_name, jaro_winkler(m1.merchant_name, m2.merchant_name) as similarity\nFROM merchants m1, merchants m2\nWHERE jaro_winkler(m1.merchant_name, m2.merchant_name) >= 0.85",
+        ],
+        reasoning: "Jaro-Winkler algorithm emphasizes prefix similarity and phonetic matching, which is better for catching typos and misspellings in merchant names. This results in 501 groups (vs 487 with Levenshtein), indicating slightly more conservative clustering. The phonetic component helps with names like 'Walmart' vs 'Wal-mart' or 'McDonald's' vs 'McDonalds'. Expected improvement in handling abbreviated vs full company names."
+      };
+      delete nodePlans["2"].completed;
 
       nodePlans["3"].plan!.decisions[0] = "Apply canonical names from Jaro-Winkler clustering (501 groups)";
       nodePlans["3"].plan!.reasoning = "Jaro-Winkler algorithm emphasizes prefix similarity and phonetic matching, which is better for catching typos and misspellings in merchant names. This results in 501 groups (vs 487 with Levenshtein), indicating slightly more conservative clustering. The phonetic component helps with names like 'Walmart' vs 'Wal-mart' or 'McDonald's' vs 'McDonalds'. Expected improvement in handling abbreviated vs full company names.";
 
       setNodes((nds) =>
         nds.map((n) => {
+          const nNum = parseInt(n.id.replace(/[a-z]/g, ""));
           if (n.id === "2") {
             return {
               ...n,
@@ -490,11 +631,13 @@ function RunningWorkflowView({ workflowId }: { workflowId: string }) {
           } else if (n.id === "3") {
             return {
               ...n,
-              data: { label: "Unify Names (501 groups)" },
-              style: { opacity: 0.5, border: "2px solid #F59E0B" }
+              data: { label: "Unify Names (pending)" },
+              style: { opacity: 1, border: "2px solid #F59E0B", boxShadow: "0 0 0 3px rgba(245, 158, 11, 0.2)" }
             };
-          } else if (parseInt(n.id.replace(/[a-z]/g, "")) > 3) {
+          } else if (nNum > 3) {
             return { ...n, style: { ...n.style, opacity: 0.25 } };
+          } else if (nNum < 2) {
+            return { ...n, style: { ...n.style, opacity: 1 } };
           }
           return n;
         })
@@ -811,45 +954,39 @@ function RunningWorkflowView({ workflowId }: { workflowId: string }) {
               )}
             </div>
 
-            {/* Dialog Footer - Only show for planned (not completed and not currently executing) nodes */}
-            {!isDone && nodeNum !== currentStep && (
-              <div className="p-4 border-t border-[var(--border-default)] space-y-3">
-                <div>
-                  <label className="text-xs text-[var(--text-tertiary)] mb-2 block">
-                    What would you like to do differently?
-                  </label>
-                  <textarea
-                    value={changeInput}
-                    onChange={(e) => setChangeInput(e.target.value)}
-                    placeholder="E.g., Use a different clustering algorithm, increase the threshold to 0.9..."
-                    className="w-full p-3 bg-[var(--bg-tertiary)] border border-[var(--border-default)] rounded-lg text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] resize-none"
-                    rows={3}
-                  />
-                </div>
-                <Button
-                  onClick={handlePropagateChanges}
-                  disabled={!changeInput.trim()}
-                  className="w-full"
-                  style={{
-                    background: changeInput.trim() ? "var(--accent-primary)" : "var(--bg-elevated)",
-                    color: changeInput.trim() ? "white" : "var(--text-muted)",
-                  }}
-                >
-                  Propagate Changes
-                </Button>
-              </div>
-            )}
-
-            {/* Special footer for currently executing step */}
-            {nodeNum === currentStep && (
-              <div className="p-4 border-t border-[var(--border-default)]">
-                <div className="p-3 rounded-lg bg-[var(--bg-elevated)] text-center">
-                  <p className="text-xs text-[var(--text-tertiary)]">
-                    This step is currently executing. You can modify it after completion or cancel the workflow to make changes.
+            {/* Dialog Footer - Allow changes for all nodes */}
+            <div className="p-4 border-t border-[var(--border-default)] space-y-3">
+              {(isDone || nodeNum === currentStep) && (
+                <div className="p-2 rounded-lg bg-orange-500/10 border border-orange-500/30 mb-3">
+                  <p className="text-xs text-orange-400">
+                    {isDone ? "⚠️ Changing this completed step will revert the workflow to this point and re-execute from here." : "⚠️ Changing this currently executing step will cancel current execution and restart from here."}
                   </p>
                 </div>
+              )}
+              <div>
+                <label className="text-xs text-[var(--text-tertiary)] mb-2 block">
+                  What would you like to do differently?
+                </label>
+                <textarea
+                  value={changeInput}
+                  onChange={(e) => setChangeInput(e.target.value)}
+                  placeholder="E.g., Use a different clustering algorithm, increase the threshold to 0.9..."
+                  className="w-full p-3 bg-[var(--bg-tertiary)] border border-[var(--border-default)] rounded-lg text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] resize-none"
+                  rows={3}
+                />
               </div>
-            )}
+              <Button
+                onClick={handlePropagateChanges}
+                disabled={!changeInput.trim()}
+                className="w-full"
+                style={{
+                  background: changeInput.trim() ? "var(--accent-primary)" : "var(--bg-elevated)",
+                  color: changeInput.trim() ? "white" : "var(--text-muted)",
+                }}
+              >
+                {isDone || nodeNum === currentStep ? "Revert & Propagate Changes" : "Propagate Changes"}
+              </Button>
+            </div>
           </div>
         )}
       </div>

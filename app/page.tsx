@@ -25,7 +25,7 @@ interface Workflow {
 }
 
 const statusCounts = {
-  running: 12,
+  running: 2,
   timed_out: 45,
   completed: 1203,
   failed: 78,
@@ -132,7 +132,7 @@ export default function Dashboard() {
       <div className="overflow-x-auto m-5 border border-[var(--border-default)] rounded-md">
         <Table>
           <TableHeader>
-            <TableRow style={{ background: "#F97316CC" }}>
+            <TableRow style={{ background: "#8C43D0CC" }}>
               <TableHead className="w-12">
                 {/* <Checkbox /> */}
               </TableHead>

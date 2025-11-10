@@ -15,21 +15,20 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import Image from "next/image";
 
 const navigation = [
-  { name: "Cloud", href: "/cloud", icon: Cloud },
-  { name: "Namespaces", href: "/namespaces", icon: Database },
+  { name: "Databases", href: "/namespaces", icon: Database },
   { name: "Workflows", href: "/", icon: Workflow },
   { name: "Schedules", href: "/schedules", icon: Clock },
-  { name: "Batch", href: "/batch", icon: Layers },
-  { name: "Deployments", href: "/deployments", icon: Rocket },
-  { name: "Nexus", href: "/nexus", icon: Share2 },
+  // { name: "Batch", href: "/batch", icon: Layers },
+  { name: "Org Context", href: "/nexus", icon: Share2 },
 ];
 
 const bottomNavigation = [
-  { name: "Support", href: "/support", icon: HelpCircle },
-  { name: "Docs", href: "/docs", icon: FileText },
-  { name: "Welcome", href: "/welcome", icon: Sparkles },
+  // { name: "Support", href: "/support", icon: HelpCircle },
+  // { name: "Docs", href: "/docs", icon: FileText },
+  // { name: "Welcome", href: "/welcome", icon: Sparkles },
 ];
 
 export function Sidebar() {
@@ -40,7 +39,7 @@ export function Sidebar() {
       {/* Logo/Brand */}
       <div className="flex h-14 items-center px-4">
         <Link href="/" className="flex items-center gap-2">
-          <Cloud size={20} className="text-[var(--sidebar-foreground)]" />
+          <Image src="/pragma_logo.svg" alt="Pragma Logo" width={24} height={24} />
           <span className="text-sm font-semibold text-[var(--sidebar-foreground)]">
             Pragma
           </span>
@@ -58,7 +57,7 @@ export function Sidebar() {
               className={cn(
                 "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 isActive
-                  ? "bg-[var(--sidebar-accent)] text-[var(--sidebar-accent-foreground)]"
+                  ? "bg-[var(--sidebar-accent)] text-[var(--accent-hover)]"
                   : "text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar-accent)]/50"
               )}
             >
@@ -89,10 +88,20 @@ export function Sidebar() {
             </Link>
           );
         })}
-        <div className="px-3 py-2">
-          <p className="text-xs text-[var(--sidebar-foreground)] opacity-60">
-            2.40.1
-          </p>
+        <div className="px-2 py-2">
+          <div className="flex items-center gap-2 p-2 rounded-md hover:bg-[var(--sidebar-accent)]/50 cursor-pointer transition-colors">
+            <div className="w-8 h-8 rounded-full bg-[var(--accent-primary)] flex items-center justify-center text-white text-sm font-semibold">
+              SS
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-[var(--sidebar-foreground)] truncate">
+                Shubhayan Srivastava
+              </p>
+              <p className="text-xs text-[var(--sidebar-foreground)] opacity-60 truncate">
+                shubhayan@pragma.ai
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
