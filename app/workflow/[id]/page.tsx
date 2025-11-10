@@ -113,15 +113,773 @@ const executedEdges: Edge[] = [
   { id: "e6-7", source: "6", target: "7", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 1 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
 ];
 
+// Node data for different states
+interface NodePlanData {
+  label: string;
+  plan?: {
+    decisions: string[];
+    queries: string[];
+    reasoning: string;
+  };
+  completed?: {
+    decisions: string[];
+    queries: string[];
+    actions: string[];
+  };
+}
+
+const nodePlans: Record<string, NodePlanData> = {
+  "1": {
+    label: "Load Data",
+    completed: {
+      decisions: [
+        "Connected to postgres-prod.public.transactions using connection pool",
+        "Validated schema compatibility (12 columns detected)",
+        "Applied row limit of 2,450 for initial processing",
+        "Detected merchant_name column with 89% fill rate",
+        "Detected sku_code column with 73% fill rate",
+      ],
+      queries: [
+        "SELECT * FROM postgres-prod.public.transactions LIMIT 2450",
+        "SELECT COUNT(*), COUNT(DISTINCT merchant_name), COUNT(DISTINCT sku_code) FROM postgres-prod.public.transactions",
+      ],
+      actions: [
+        "✓ Established database connection (127ms latency)",
+        "✓ Loaded 2,450 rows into memory (145MB)",
+        "✓ Validated data types and constraints",
+        "✓ Created indexes on merchant_name and sku_code",
+        "✓ Computed data quality metrics: 94% completeness",
+      ],
+    },
+  },
+  "2": {
+    label: "Cluster Merchants",
+    completed: {
+      decisions: [
+        "Selected Levenshtein distance algorithm with threshold 0.85",
+        "Found 2,183 unique merchant name variants",
+        "Clustered into 487 canonical merchant groups",
+        "Applied business name normalization rules (Inc., LLC, Corp.)",
+        "Resolved 156 ambiguous cases using frequency voting",
+        "Average cluster size: 4.5 variants per canonical name",
+      ],
+      queries: [
+        "SELECT DISTINCT merchant_name, COUNT(*) as frequency FROM transactions GROUP BY merchant_name",
+        "-- Fuzzy matching using Levenshtein distance\nSELECT m1.merchant_name, m2.merchant_name, levenshtein(m1.merchant_name, m2.merchant_name) as distance\nFROM merchants m1, merchants m2\nWHERE levenshtein(m1.merchant_name, m2.merchant_name) < 3",
+      ],
+      actions: [
+        "✓ Normalized 2,183 merchant names (removed special chars, lowercased)",
+        "✓ Applied fuzzy matching algorithm (1.2s processing time)",
+        "✓ Created 487 canonical merchant clusters",
+        "✓ Resolved conflicts using frequency-based voting",
+        "✓ Generated merchant mapping table with 95% confidence",
+        "✓ Identified 23 edge cases requiring manual review",
+      ],
+    },
+  },
+  "3": {
+    label: "Unify Names",
+    plan: {
+      decisions: [
+        "Apply canonical names to all 2,450 merchant transactions",
+        "Use frequency-based voting for conflict resolution",
+        "Preserve original names in merchant_name_original column",
+        "Update merchant_canonical column with standardized names",
+        "Flag low-confidence matches (< 85%) for manual review",
+      ],
+      queries: [
+        "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS merchant_name_original VARCHAR(255)",
+        "UPDATE transactions SET merchant_name_original = merchant_name",
+        "UPDATE transactions t SET merchant_canonical = m.canonical_name FROM merchant_mapping m WHERE t.merchant_name = m.variant_name",
+      ],
+      reasoning: "Standardizing merchant names ensures consistency across the dataset and improves data quality for downstream analysis. By preserving original names, we maintain data lineage and can audit the transformation process. The frequency-based voting approach ensures that the most common variant becomes the canonical name, reducing the risk of selecting an incorrect or outdated name variant.",
+    },
+  },
+  "4": {
+    label: "Extract SKUs",
+    plan: {
+      decisions: [
+        "Parse and extract SKU codes from sku_code column using regex patterns",
+        "Apply data cleaning: trim whitespace, normalize case, remove invalid characters",
+        "Validate SKU format against common patterns (alphanumeric, dashes, underscores)",
+        "Filter out NULL, empty strings, and malformed SKU codes",
+        "Create deduplicated list of unique SKUs for downstream enrichment",
+        "Log extraction statistics: total SKUs, unique SKUs, invalid SKUs",
+      ],
+      queries: [
+        "SELECT DISTINCT TRIM(UPPER(sku_code)) as sku_clean FROM transactions WHERE sku_code IS NOT NULL AND sku_code != ''",
+        "-- Count unique vs total SKUs\nSELECT COUNT(*) as total_skus, COUNT(DISTINCT sku_code) as unique_skus, COUNT(*) - COUNT(DISTINCT sku_code) as duplicates FROM transactions WHERE sku_code IS NOT NULL",
+        "-- Identify invalid SKU patterns\nSELECT sku_code, COUNT(*) as frequency FROM transactions WHERE sku_code !~ '^[A-Za-z0-9_-]+$' GROUP BY sku_code",
+      ],
+      reasoning: "Extracting and standardizing SKU codes is critical for successful product enrichment. By cleaning and validating SKUs upfront, we ensure higher match rates when querying external data sources (catalogs, APIs, web search). The deduplication step reduces unnecessary API calls and improves performance. Invalid SKUs are logged for manual review to identify potential data quality issues in the source system.",
+    },
+  },
+  "5a": {
+    label: "Catalog",
+    plan: {
+      decisions: [
+        "Query internal product catalog (postgres-prod.products) as first priority",
+        "Use exact SKU matching on indexed sku_code column for fast lookups",
+        "Batch queries in groups of 100 SKUs to optimize database performance",
+        "Extract product_name, category_l1, category_l2, category_l3, msrp, current_price",
+        "Cache results in Redis with 30-day TTL to reduce database load",
+        "Track match rate and identify SKUs not found in internal catalog",
+      ],
+      queries: [
+        "SELECT sku_code, product_name, category_l1, category_l2, category_l3, msrp, current_price FROM postgres-prod.products WHERE sku_code = ANY($1)",
+        "-- Verify cache hit rate\nSELECT COUNT(*) as cached_lookups FROM redis_stats WHERE key_pattern = 'catalog:sku:*' AND timestamp > NOW() - INTERVAL '1 hour'",
+      ],
+      reasoning: "Internal product catalog is the highest-quality data source with complete ownership, zero latency costs, and fastest query performance. By prioritizing internal data first, we maximize enrichment quality while minimizing external API costs. The Redis caching layer further optimizes performance for repeated lookups. Expected match rate is 65-70% based on historical catalog coverage, with remaining SKUs requiring external enrichment sources.",
+    },
+  },
+  "5b": {
+    label: "API",
+    plan: {
+      decisions: [
+        "Use Amazon Product Advertising API v5 for SKUs not found in internal catalog",
+        "Implement rate limiting: 10 requests/second with exponential backoff on 429 errors",
+        "Batch requests: 10 items per API call to optimize quota usage",
+        "Request fields: ItemInfo.Title, ItemInfo.Classifications, Offers.Listings[0].Price",
+        "Set timeout to 5 seconds per request with 2 retry attempts",
+        "Track API costs: $0.0003 per request, estimate total cost before execution",
+        "Handle API errors gracefully: log failed SKUs for fallback to web search",
+      ],
+      queries: [
+        "POST https://webservices.amazon.com/paapi5/searchitems\nContent-Type: application/json\nAuthorization: AWS4-HMAC-SHA256 ...\n\n{\n  \"PartnerTag\": \"enrichment-20\",\n  \"PartnerType\": \"Associates\",\n  \"Keywords\": \"{sku_code}\",\n  \"SearchIndex\": \"All\",\n  \"Resources\": [\"ItemInfo.Title\", \"ItemInfo.Classifications\", \"Offers.Listings\"]\n}",
+      ],
+      reasoning: "Amazon Product API provides comprehensive, structured product data for millions of SKUs with high reliability. While it incurs API costs (~$0.0003 per request), the data quality and coverage justify the expense for SKUs not in our internal catalog. The batch request approach optimizes quota usage and reduces total cost. Rate limiting and retry logic ensure we stay within API limits while maximizing successful enrichments. Expected match rate is 50-55% for consumer products.",
+    },
+  },
+  "5c": {
+    label: "Web Search",
+    plan: {
+      decisions: [
+        "Use Google Custom Search API as final fallback for remaining unmatched SKUs",
+        "Construct targeted queries: 'SKU {code} product specifications'",
+        "Retrieve top 5 results per query, prioritize e-commerce and manufacturer sites",
+        "Parse structured data: Schema.org Product markup, Open Graph tags, JSON-LD",
+        "Apply heuristics for unstructured content: extract product name from title/h1 tags",
+        "Assign confidence scores based on data source and parsing method (90%+ for Schema.org, 60-75% for heuristics)",
+        "Filter low-confidence results (< 50%) to prevent incorrect enrichments",
+      ],
+      queries: [
+        "GET https://www.googleapis.com/customsearch/v1?key={API_KEY}&cx={SEARCH_ENGINE_ID}&q=SKU+{sku_code}+product",
+        "-- Parse Schema.org structured data\nEXTRACT JSON-LD WHERE @type = 'Product' FROM html_content",
+        "-- Fallback heuristic parsing\nEXTRACT text FROM css_selector('h1.product-title, .product-name, #product-title')",
+      ],
+      reasoning: "Web search serves as the final fallback for long-tail SKUs not found in catalogs or APIs. While data quality is lower and confidence varies, it provides coverage for niche products and obscure SKUs. The structured data parsing approach (Schema.org, JSON-LD) ensures higher confidence when available. Heuristic parsing handles unstructured pages but requires confidence scoring to prevent bad matches. Expected match rate is 45-50% with average confidence of 70-75%. This multi-source enrichment strategy maximizes overall coverage while maintaining data quality standards.",
+    },
+  },
+  "6": {
+    label: "Merge Data",
+    plan: {
+      decisions: [
+        "Implement priority-based merge strategy: Internal Catalog (priority 1) > Amazon API (priority 2) > Web Search (priority 3)",
+        "Use LEFT JOIN to preserve all 2,450 transaction rows, even those without enrichment",
+        "Handle field-level conflicts: prefer higher-priority source for each field independently",
+        "For product_name: accept all sources (Catalog > API > Web)",
+        "For category: only use Catalog and API data (Web search category data unreliable)",
+        "For price: only use Catalog data (API prices often outdated, Web prices inconsistent)",
+        "Track merge metadata: record data source and confidence score for each enriched field",
+        "Resolve 87 detected conflicts using priority rules, flag 9 ambiguous cases for manual review",
+      ],
+      queries: [
+        "-- Create staging table with all enrichment sources\nCREATE TEMP TABLE enrichment_staging AS\nSELECT t.id, t.sku_code, \n  COALESCE(c.product_name, a.product_name, w.product_name) as product_name,\n  COALESCE(c.category_l1, a.category_l1) as category_l1,\n  c.current_price as price,\n  CASE WHEN c.product_name IS NOT NULL THEN 'catalog' \n       WHEN a.product_name IS NOT NULL THEN 'api'\n       WHEN w.product_name IS NOT NULL THEN 'web' END as source\nFROM transactions t\nLEFT JOIN catalog_enrichments c ON t.sku_code = c.sku_code\nLEFT JOIN api_enrichments a ON t.sku_code = a.sku_code\nLEFT JOIN web_enrichments w ON t.sku_code = w.sku_code",
+        "-- Identify and log conflicts\nSELECT id, sku_code, 'product_name' as field, \n  c.product_name as catalog_value, \n  a.product_name as api_value, \n  w.product_name as web_value\nFROM enrichment_staging\nWHERE c.product_name != a.product_name OR c.product_name != w.product_name",
+      ],
+      reasoning: "The priority-based merge strategy ensures we use the highest-quality data available for each transaction while maintaining complete dataset integrity through LEFT JOIN. By handling conflicts at the field level rather than row level, we can mix and match the best data from each source. The tiered priority system (Catalog > API > Web) reflects data quality and confidence levels. Metadata tracking (source, confidence) enables downstream auditing and quality analysis. The approach achieves 92% final enrichment coverage by cascading through multiple sources while maintaining data quality standards through selective field merging.",
+    },
+  },
+  "7": {
+    label: "Write Back",
+    plan: {
+      decisions: [
+        "Write enriched data to postgres-prod.enriched_transactions table using UPSERT pattern",
+        "Use ON CONFLICT (id) DO UPDATE to handle idempotency and concurrent workflow runs",
+        "Include enrichment metadata: enriched_at timestamp, enrichment_source, confidence_score",
+        "Preserve original transaction data in separate columns for auditing (merchant_name_original, sku_code_original)",
+        "Create enrichment audit log in postgres-prod.enrichment_log with workflow_id, run_id, rows_processed, status",
+        "Batch inserts in groups of 500 rows to optimize write performance",
+        "Add composite index on (workflow_id, enriched_at) for efficient querying of enrichment history",
+        "Validate write success: confirm 2,450 rows written, check for constraint violations",
+      ],
+      queries: [
+        "INSERT INTO postgres-prod.enriched_transactions \n  (id, workflow_id, run_id, merchant_name_original, merchant_canonical, sku_code_original, sku_code_clean, product_name, category_l1, category_l2, price, enrichment_source, confidence_score, enriched_at)\nSELECT \n  t.id, $1 as workflow_id, $2 as run_id,\n  t.merchant_name as merchant_name_original,\n  m.canonical_name as merchant_canonical,\n  t.sku_code as sku_code_original,\n  e.sku_code_clean,\n  e.product_name, e.category_l1, e.category_l2, e.price,\n  e.source as enrichment_source,\n  e.confidence as confidence_score,\n  NOW() as enriched_at\nFROM transactions t\nLEFT JOIN merchant_mapping m ON t.merchant_name = m.variant_name\nLEFT JOIN enrichment_staging e ON t.id = e.id\nON CONFLICT (id) DO UPDATE SET\n  merchant_canonical = EXCLUDED.merchant_canonical,\n  product_name = EXCLUDED.product_name,\n  category_l1 = EXCLUDED.category_l1,\n  enriched_at = EXCLUDED.enriched_at",
+        "-- Create audit log entry\nINSERT INTO postgres-prod.enrichment_log (workflow_id, run_id, rows_processed, rows_enriched, enrichment_rate, status, completed_at)\nVALUES ($1, $2, 2450, 2253, 0.92, 'completed', NOW())",
+        "-- Verify write success\nSELECT COUNT(*) as total_rows, \n  COUNT(product_name) as enriched_product,\n  COUNT(merchant_canonical) as enriched_merchant\nFROM postgres-prod.enriched_transactions \nWHERE workflow_id = $1 AND run_id = $2",
+      ],
+      reasoning: "The UPSERT pattern ensures workflow idempotency, allowing safe re-runs without data duplication. By preserving original values alongside enriched values, we maintain complete data lineage for auditing and debugging. The enrichment metadata (source, confidence, timestamp) enables quality analysis and continuous improvement of enrichment strategies. Batched inserts optimize database performance for large datasets. The audit log provides workflow-level tracking for monitoring, alerting, and analytics. Index optimization ensures efficient querying of enrichment history for reporting and analysis. Final validation confirms successful write completion and data integrity before marking workflow as complete.",
+    },
+  },
+};
+
+// Running workflow component
+function RunningWorkflowView({ workflowId }: { workflowId: string }) {
+  const router = useRouter();
+
+  // Current step is 3 (Unify Names) - steps 1-2 are done
+  const currentStep = 3;
+
+  // Create nodes with appropriate opacity and styling
+  const runningNodes: Node[] = [
+    {
+      id: "1",
+      type: "input",
+      position: { x: 250, y: 50 },
+      data: { label: "Load Data" },
+      style: { opacity: 1 },
+    },
+    {
+      id: "2",
+      type: "default",
+      position: { x: 250, y: 150 },
+      data: { label: "Cluster Merchants" },
+      style: { opacity: 1 },
+    },
+    {
+      id: "3",
+      type: "default",
+      position: { x: 250, y: 260 },
+      data: { label: "Unify Names" },
+      style: { opacity: 1, border: "2px solid var(--accent-primary)", boxShadow: "0 0 0 3px rgba(140, 67, 208, 0.2)" },
+    },
+    {
+      id: "4",
+      type: "default",
+      position: { x: 250, y: 370 },
+      data: { label: "Extract SKUs" },
+      style: { opacity: 0.4 },
+    },
+    {
+      id: "5a",
+      type: "default",
+      position: { x: 80, y: 480 },
+      data: { label: "Catalog" },
+      style: { opacity: 0.4 },
+    },
+    {
+      id: "5b",
+      type: "default",
+      position: { x: 250, y: 480 },
+      data: { label: "API" },
+      style: { opacity: 0.4 },
+    },
+    {
+      id: "5c",
+      type: "default",
+      position: { x: 420, y: 480 },
+      data: { label: "Web Search" },
+      style: { opacity: 0.4 },
+    },
+    {
+      id: "6",
+      type: "default",
+      position: { x: 250, y: 590 },
+      data: { label: "Merge Data" },
+      style: { opacity: 0.4 },
+    },
+    {
+      id: "7",
+      type: "output",
+      position: { x: 250, y: 690 },
+      data: { label: "Write Back" },
+      style: { opacity: 0.4 },
+    },
+  ];
+
+  const runningEdges: Edge[] = [
+    { id: "e1-2", source: "1", target: "2", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 1 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+    { id: "e2-3", source: "2", target: "3", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 1 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+    { id: "e3-4", source: "3", target: "4", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+    { id: "e4-5a", source: "4", target: "5a", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+    { id: "e4-5b", source: "4", target: "5b", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+    { id: "e4-5c", source: "4", target: "5c", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+    { id: "e5a-6", source: "5a", target: "6", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+    { id: "e5b-6", source: "5b", target: "6", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+    { id: "e5c-6", source: "5c", target: "6", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+    { id: "e6-7", source: "6", target: "7", style: { stroke: "#5d5d5dff", strokeWidth: 1, opacity: 0.4 }, markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: "#5d5d5dff" } },
+  ];
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(runningNodes);
+  const [edges, , onEdgesChange] = useEdgesState(runningEdges);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [changeInput, setChangeInput] = useState("");
+  const [isPropagating, setIsPropagating] = useState(false);
+
+  const handleNodeClick = (event: any, node: Node) => {
+    setSelectedNode(node.id);
+    setDialogOpen(true);
+    setChangeInput("");
+  };
+
+  const handlePropagateChanges = async () => {
+    if (!changeInput.trim() || !selectedNode) return;
+
+    setIsPropagating(true);
+    setDialogOpen(false);
+
+    // Show thinking state - update current node
+    setNodes((nds) =>
+      nds.map((n) =>
+        n.id === selectedNode
+          ? { ...n, style: { ...n.style, border: "2px solid #F59E0B", boxShadow: "0 0 0 3px rgba(245, 158, 11, 0.2)" } }
+          : n
+      )
+    );
+
+    // Simulate AI thinking
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+
+    // Detect specific change prompts and modify the graph accordingly
+    const inputLower = changeInput.toLowerCase();
+
+    // Hardcoded change detection for node 2 (Cluster Merchants)
+    if (selectedNode === "2" && (inputLower.includes("threshold") || inputLower.includes("0.9") || inputLower.includes("90"))) {
+      // User wants to increase clustering threshold to 0.9
+      // Update node 2 data
+      nodePlans["2"].completed!.decisions[0] = "Selected Levenshtein distance algorithm with threshold 0.90 (increased from 0.85)";
+      nodePlans["2"].completed!.decisions[2] = "Clustered into 412 canonical merchant groups (reduced from 487 due to stricter matching)";
+      nodePlans["2"].completed!.decisions[5] = "Average cluster size: 5.3 variants per canonical name (increased from 4.5)";
+
+      // Update node 3 (Unify Names) to reflect the change
+      nodePlans["3"].plan!.decisions[0] = "Apply canonical names from updated clustering (412 groups with 0.90 threshold)";
+      nodePlans["3"].plan!.reasoning = "With the increased threshold of 0.90, clustering is more conservative, resulting in 412 canonical groups instead of 487. This means fewer aggressive merges, reducing the risk of incorrectly combining distinct merchants. The trade-off is slightly lower consolidation but higher accuracy. Manual review cases reduced to 15 (from 23) due to higher confidence threshold.";
+
+      // Update node labels to show they've changed
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id === "2") {
+            return {
+              ...n,
+              data: { label: "Cluster Merchants (0.90)" },
+              style: { opacity: 1, border: "2px solid #10B981", boxShadow: "0 0 0 3px rgba(16, 185, 129, 0.2)" }
+            };
+          } else if (n.id === "3") {
+            return {
+              ...n,
+              data: { label: "Unify Names (412 groups)" },
+              style: { opacity: 0.5, border: "2px solid #F59E0B" }
+            };
+          } else if (parseInt(n.id.replace(/[a-z]/g, "")) > 3) {
+            return { ...n, style: { ...n.style, opacity: 0.25 } };
+          }
+          return n;
+        })
+      );
+    }
+    // Hardcoded change detection for node 2 - different algorithm
+    else if (selectedNode === "2" && (inputLower.includes("algorithm") || inputLower.includes("jaro") || inputLower.includes("soundex"))) {
+      // User wants to use a different algorithm
+      nodePlans["2"].completed!.decisions[0] = "Selected Jaro-Winkler distance algorithm with threshold 0.85 (changed from Levenshtein)";
+      nodePlans["2"].completed!.decisions[2] = "Clustered into 501 canonical merchant groups (slightly more than Levenshtein due to phonetic bias)";
+      nodePlans["2"].completed!.decisions[3] = "Applied business name normalization rules and phonetic matching (Inc., LLC, Corp.)";
+      nodePlans["2"].completed!.actions[1] = "✓ Applied Jaro-Winkler algorithm with phonetic bias (1.4s processing time)";
+
+      nodePlans["3"].plan!.decisions[0] = "Apply canonical names from Jaro-Winkler clustering (501 groups)";
+      nodePlans["3"].plan!.reasoning = "Jaro-Winkler algorithm emphasizes prefix similarity and phonetic matching, which is better for catching typos and misspellings in merchant names. This results in 501 groups (vs 487 with Levenshtein), indicating slightly more conservative clustering. The phonetic component helps with names like 'Walmart' vs 'Wal-mart' or 'McDonald's' vs 'McDonalds'. Expected improvement in handling abbreviated vs full company names.";
+
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id === "2") {
+            return {
+              ...n,
+              data: { label: "Cluster Merchants (Jaro-Winkler)" },
+              style: { opacity: 1, border: "2px solid #10B981", boxShadow: "0 0 0 3px rgba(16, 185, 129, 0.2)" }
+            };
+          } else if (n.id === "3") {
+            return {
+              ...n,
+              data: { label: "Unify Names (501 groups)" },
+              style: { opacity: 0.5, border: "2px solid #F59E0B" }
+            };
+          } else if (parseInt(n.id.replace(/[a-z]/g, "")) > 3) {
+            return { ...n, style: { ...n.style, opacity: 0.25 } };
+          }
+          return n;
+        })
+      );
+    }
+    // Hardcoded change detection for node 3 (Unify Names)
+    else if (selectedNode === "3" && (inputLower.includes("preserve") || inputLower.includes("keep original") || inputLower.includes("backup"))) {
+      // User wants to ensure original data is preserved
+      nodePlans["3"].plan!.decisions.push("Add merchant_name_backup column with original values before any transformation");
+      nodePlans["3"].plan!.queries.push("CREATE TABLE merchant_history AS SELECT id, merchant_name, merchant_canonical, updated_at FROM transactions");
+      nodePlans["3"].plan!.reasoning += " Additionally, a backup table (merchant_history) will be created to maintain a complete audit trail of all name transformations, enabling rollback if needed.";
+
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id === "3") {
+            return {
+              ...n,
+              data: { label: "Unify Names (+ backup)" },
+              style: { opacity: 1, border: "2px solid #10B981", boxShadow: "0 0 0 3px rgba(16, 185, 129, 0.2)" }
+            };
+          } else if (parseInt(n.id.replace(/[a-z]/g, "")) > 3) {
+            return { ...n, style: { ...n.style, opacity: 0.3 } };
+          }
+          return n;
+        })
+      );
+    }
+    // Hardcoded change detection for node 4 (Extract SKUs)
+    else if (selectedNode === "4" && (inputLower.includes("validation") || inputLower.includes("strict") || inputLower.includes("validate more"))) {
+      // User wants stricter SKU validation
+      nodePlans["4"].plan!.decisions.push("Add checksum validation for SKUs with embedded check digits");
+      nodePlans["4"].plan!.decisions.push("Cross-reference with known SKU formats from major retailers (Amazon, Walmart, Best Buy)");
+      nodePlans["4"].plan!.queries.push("-- Validate against known SKU patterns\nSELECT sku_code FROM transactions WHERE sku_code ~ '^(AMZN|WMT|BBY)-[A-Z0-9]{8,12}$'");
+      nodePlans["4"].plan!.reasoning += " Enhanced validation includes checksum verification and format matching against major retailer patterns, reducing false positives and improving downstream enrichment quality.";
+
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id === "4") {
+            return {
+              ...n,
+              data: { label: "Extract SKUs (strict)" },
+              style: { opacity: 1, border: "2px solid #10B981", boxShadow: "0 0 0 3px rgba(16, 185, 129, 0.2)" }
+            };
+          } else if (parseInt(n.id.replace(/[a-z]/g, "")) > 4) {
+            return { ...n, style: { ...n.style, opacity: 0.3 } };
+          }
+          return n;
+        })
+      );
+    }
+    // Hardcoded change detection for node 5b (API)
+    else if ((selectedNode === "5b" || selectedNode === "5a" || selectedNode === "5c") && (inputLower.includes("skip") || inputLower.includes("remove") || inputLower.includes("don't use"))) {
+      // User wants to skip a data source
+      const nodeLabel = selectedNode === "5a" ? "Catalog" : selectedNode === "5b" ? "API" : "Web Search";
+
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id === selectedNode) {
+            return {
+              ...n,
+              data: { label: `${nodeLabel} (Skipped)` },
+              style: { opacity: 0.3, border: "2px solid #DC2626", boxShadow: "0 0 0 3px rgba(220, 38, 38, 0.2)" }
+            };
+          } else if (n.id === "6") {
+            return {
+              ...n,
+              data: { label: "Merge Data (2 sources)" },
+              style: { opacity: 0.5, border: "2px solid #F59E0B" }
+            };
+          } else if (parseInt(n.id.replace(/[a-z]/g, "")) > 6) {
+            return { ...n, style: { ...n.style, opacity: 0.3 } };
+          }
+          return n;
+        })
+      );
+    }
+    // Generic change - just mark nodes as updated
+    else {
+      setNodes((nds) =>
+        nds.map((n) => {
+          const nodeNum = parseInt(n.id.replace(/[a-z]/g, ""));
+          const selectedNum = parseInt(selectedNode.replace(/[a-z]/g, ""));
+
+          if (n.id === selectedNode) {
+            return {
+              ...n,
+              data: { label: n.data.label + " ✓" },
+              style: { opacity: 1, border: "2px solid #10B981", boxShadow: "0 0 0 3px rgba(16, 185, 129, 0.2)" }
+            };
+          } else if (nodeNum > selectedNum) {
+            return { ...n, style: { ...n.style, opacity: 0.3 } };
+          }
+          return n;
+        })
+      );
+    }
+
+    setIsPropagating(false);
+    setChangeInput("");
+  };
+
+  const selectedNodeData = selectedNode ? nodePlans[selectedNode] : null;
+  const nodeNum = selectedNode ? parseInt(selectedNode.replace(/[a-z]/g, "")) : 0;
+  const isDone = nodeNum < currentStep;
+
+  return (
+    <div className="h-screen flex flex-col bg-[var(--bg-primary)]">
+      {/* Header */}
+      <div className="border-b border-[var(--border-default)] bg-[var(--bg-secondary)] px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" onClick={() => router.push("/")}>
+              <ArrowLeft size={20} />
+            </Button>
+            <div>
+              <h1 className="text-xl font-semibold text-[var(--text-primary)]">
+                Merchant Enrichment Workflow
+              </h1>
+              <p className="text-sm text-[var(--text-tertiary)] mt-1 flex items-center gap-3">
+                <span className="flex items-center gap-1">
+                  <Clock size={14} className="text-orange-500 animate-pulse" />
+                  Running
+                </span>
+                <span>Step {currentStep} of 7</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content - Just the graph */}
+      <div className="flex-1 relative">
+        {isPropagating && (
+          <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center">
+            <div className="bg-[var(--bg-secondary)] p-6 rounded-lg border border-[var(--border-default)]">
+              <div className="flex items-center gap-3">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-[var(--accent-primary)]" />
+                <span className="text-[var(--text-primary)]">Thinking and propagating changes...</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={handleNodeClick}
+          fitView
+          style={{ background: "var(--bg-primary)" }}
+          proOptions={reactFlowOptions}
+        >
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1}
+            color="rgba(255, 255, 255, 0.35)"
+            style={{ background: "var(--bg-primary)" }}
+          />
+        </ReactFlow>
+
+        {/* Dialog */}
+        {dialogOpen && selectedNodeData && (
+          <div className="absolute top-0 right-0 h-full w-[500px] bg-[var(--bg-secondary)] border-l border-[var(--border-default)] shadow-2xl z-40 flex flex-col">
+            {/* Dialog Header */}
+            <div className="p-4 border-b border-[var(--border-default)]">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+                  {selectedNodeData.label}
+                </h2>
+                <Button variant="ghost" size="icon" onClick={() => setDialogOpen(false)}>
+                  <span className="text-[var(--text-tertiary)]">✕</span>
+                </Button>
+              </div>
+              {isDone && (
+                <p className="text-xs text-green-500 mt-1">✓ Completed</p>
+              )}
+              {!isDone && nodeNum === currentStep && (
+                <p className="text-xs text-[var(--accent-primary)] mt-1 flex items-center gap-1">
+                  <span className="animate-pulse">●</span> Currently Executing
+                </p>
+              )}
+              {!isDone && nodeNum !== currentStep && (
+                <p className="text-xs text-[var(--text-tertiary)] mt-1">○ Planning</p>
+              )}
+            </div>
+
+            {/* Dialog Content */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {isDone && selectedNodeData.completed ? (
+                <>
+                  <div>
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">Decisions Made</h3>
+                    <ul className="space-y-1 text-sm text-[var(--text-secondary)]">
+                      {selectedNodeData.completed.decisions.map((decision, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="text-[var(--accent-primary)] mt-1">•</span>
+                          <span>{decision}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">Queries Executed</h3>
+                    <div className="space-y-2">
+                      {selectedNodeData.completed.queries.map((query, i) => (
+                        <code key={i} className="block p-2 bg-[var(--bg-tertiary)] rounded text-xs text-[var(--text-primary)] font-mono">
+                          {query}
+                        </code>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">Actions Taken</h3>
+                    <ul className="space-y-1 text-sm text-[var(--text-secondary)]">
+                      {selectedNodeData.completed.actions.map((action, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="text-green-500 mt-1">✓</span>
+                          <span>{action}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
+              ) : nodeNum === currentStep ? (
+                /* Currently executing step - show loading state */
+                <>
+                  <div className="p-4 rounded-lg bg-[var(--bg-elevated)] border border-[var(--accent-primary)]">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[var(--accent-primary)]" />
+                      <h3 className="text-sm font-semibold text-[var(--accent-primary)]">Currently Executing</h3>
+                    </div>
+                    <p className="text-sm text-[var(--text-secondary)]">
+                      This step is actively running. View the planned approach below.
+                    </p>
+                  </div>
+                  {selectedNodeData.plan && (
+                    <>
+                      <div>
+                        <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">Execution Plan</h3>
+                        <ul className="space-y-1 text-sm text-[var(--text-secondary)]">
+                          {selectedNodeData.plan.decisions.map((decision, i) => (
+                            <li key={i} className="flex items-start gap-2">
+                              <span className="text-[var(--accent-primary)] mt-1">•</span>
+                              <span>{decision}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">Planned Queries</h3>
+                        <div className="space-y-2">
+                          {selectedNodeData.plan.queries.map((query, i) => (
+                            <code key={i} className="block p-2 bg-[var(--bg-tertiary)] rounded text-xs text-[var(--text-primary)] font-mono">
+                              {query}
+                            </code>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">Reasoning</h3>
+                        <p className="text-sm text-[var(--text-secondary)]">{selectedNodeData.plan.reasoning}</p>
+                      </div>
+                      <div className="p-3 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium text-[var(--text-tertiary)]">Progress</span>
+                          <span className="text-xs font-mono text-[var(--accent-primary)]">~45%</span>
+                        </div>
+                        <div className="h-2 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-[var(--accent-primary)] transition-all duration-1000"
+                            style={{ width: "45%", animation: "pulse 2s ease-in-out infinite" }}
+                          />
+                        </div>
+                        <p className="text-xs text-[var(--text-tertiary)] mt-2">
+                          Currently applying canonical names to transactions...
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                /* Future steps - show plan */
+                selectedNodeData.plan && (
+                  <>
+                    <div>
+                      <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">Planned Decisions</h3>
+                      <ul className="space-y-1 text-sm text-[var(--text-secondary)]">
+                        {selectedNodeData.plan.decisions.map((decision, i) => (
+                          <li key={i} className="flex items-start gap-2">
+                            <span className="text-[var(--accent-primary)] mt-1">•</span>
+                            <span>{decision}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">Planned Queries</h3>
+                      <div className="space-y-2">
+                        {selectedNodeData.plan.queries.map((query, i) => (
+                          <code key={i} className="block p-2 bg-[var(--bg-tertiary)] rounded text-xs text-[var(--text-primary)] font-mono">
+                            {query}
+                          </code>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">Reasoning</h3>
+                      <p className="text-sm text-[var(--text-secondary)]">{selectedNodeData.plan.reasoning}</p>
+                    </div>
+                  </>
+                )
+              )}
+            </div>
+
+            {/* Dialog Footer - Only show for planned (not completed and not currently executing) nodes */}
+            {!isDone && nodeNum !== currentStep && (
+              <div className="p-4 border-t border-[var(--border-default)] space-y-3">
+                <div>
+                  <label className="text-xs text-[var(--text-tertiary)] mb-2 block">
+                    What would you like to do differently?
+                  </label>
+                  <textarea
+                    value={changeInput}
+                    onChange={(e) => setChangeInput(e.target.value)}
+                    placeholder="E.g., Use a different clustering algorithm, increase the threshold to 0.9..."
+                    className="w-full p-3 bg-[var(--bg-tertiary)] border border-[var(--border-default)] rounded-lg text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] resize-none"
+                    rows={3}
+                  />
+                </div>
+                <Button
+                  onClick={handlePropagateChanges}
+                  disabled={!changeInput.trim()}
+                  className="w-full"
+                  style={{
+                    background: changeInput.trim() ? "var(--accent-primary)" : "var(--bg-elevated)",
+                    color: changeInput.trim() ? "white" : "var(--text-muted)",
+                  }}
+                >
+                  Propagate Changes
+                </Button>
+              </div>
+            )}
+
+            {/* Special footer for currently executing step */}
+            {nodeNum === currentStep && (
+              <div className="p-4 border-t border-[var(--border-default)]">
+                <div className="p-3 rounded-lg bg-[var(--bg-elevated)] text-center">
+                  <p className="text-xs text-[var(--text-tertiary)]">
+                    This step is currently executing. You can modify it after completion or cancel the workflow to make changes.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function WorkflowDetailPage() {
   const params = useParams();
   const router = useRouter();
   const workflowId = params.id as string;
 
+  // Check if this is a running workflow (IDs 1 or 2)
+  const isRunning = workflowId === "1" || workflowId === "2";
+
   const [nodes, , onNodesChange] = useNodesState(executedNodes);
   const [edges, , onEdgesChange] = useEdgesState(executedEdges);
   const [showStats, setShowStats] = useState(true);
   const [selectedDecision, setSelectedDecision] = useState<string | null>(null);
+
+  // Running workflow state
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [changeInput, setChangeInput] = useState("");
+  const [isPropagating, setIsPropagating] = useState(false);
+
+  // If this is a running workflow, show the running view
+  if (isRunning) {
+    return <RunningWorkflowView workflowId={workflowId} />;
+  }
 
   return (
     <div className="h-screen flex flex-col bg-[var(--bg-primary)]">
